@@ -1,0 +1,61 @@
+# Non-secret configuration. Secrets live in .env / GitHub Actions secrets only.
+
+project:
+  name: gem-screener
+  # Public URL of the dashboard. Used only for report links.
+  site_url: ""            # e.g. https://<user>.github.io/gem-screener/
+
+database:
+  local_path: "data/gem.db"
+  # If TURSO_DATABASE_URL is set in the environment, Turso wins over local_path.
+
+universe:
+  # Which venues we snapshot. Binance is the primary perp universe.
+  exchanges: ["binance", "hyperliquid"]
+  quote_asset: "USDT"
+  # CoinGecko pages of 250 => 8 pages ~= top 2000 by market cap.
+  coingecko_pages: 8
+  coingecko_page_pause_seconds: 1.2
+
+http:
+  timeout_seconds: 20.0
+  max_attempts: 5
+  backoff_initial_seconds: 1.0
+  backoff_max_seconds: 30.0
+  user_agent: "gem-screener/0.1 (research; read-only public endpoints)"
+  # Bounded concurrency for the per-symbol openInterest endpoint (the bottleneck).
+  openinterest_concurrency: 10
+
+endpoints:
+  binance_futures: "https://fapi.binance.com"
+  binance_spot: "https://api.binance.com"
+  hyperliquid: "https://api.hyperliquid.xyz/info"
+  coingecko: "https://api.coingecko.com/api/v3"
+  coingecko_pro: "https://pro-api.coingecko.com/api/v3"
+  defillama: "https://api.llama.fi"
+  coinalyze: "https://api.coinalyze.net/v1"
+  cryptopanic: "https://cryptopanic.com/api/developer/v2"
+  lunarcrush: "https://lunarcrush.com/api4/public"
+  alternative_me: "https://api.alternative.me/fng/"
+  binance_announcements: "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query"
+
+rate_limits:
+  # requests per minute
+  binance_futures: 1200
+  binance_spot: 1000
+  hyperliquid: 600
+  coingecko: 25          # free tier is ~30/min; stay under
+  defillama: 200
+  coinalyze: 40          # documented hard cap
+  cryptopanic: 60
+  lunarcrush: 60
+
+logging:
+  level: "INFO"
+  json_file: "logs/gem-screener.jsonl"
+  console_human_readable: true
+
+reporting:
+  output_dir: "reports"
+  public_json_dir: "data/public"
+  history_window_days: 90

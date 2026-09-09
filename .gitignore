@@ -1,0 +1,44 @@
+# Secrets — NEVER commit
+.env
+.env.local
+*.pem
+
+# Databases — see IMPLEMENTATION_SPEC §1.4.5 / §18.9: never commit the DB.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local data. NOTE: data/public/ IS committed (the site reads it) — see negation below.
+data/
+!data/public/
+!data/public/**
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Node / web
+node_modules/
+web/dist/
+web/.vite/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,195 @@
+# base_asset -> sector. Used to build sector return indices (L2 block, weight 15).
+#
+# Sector flows dominate price action over weeks/months even when an individual
+# project's fundamentals are sound. Do not rank a good chart in a bleeding sector
+# highly. An asset absent from this map gets sector = "unclassified", its sector
+# block scores None, and the weight is renormalised over the remaining blocks.
+# Never guess a mapping to avoid a null — a null is honest, a guess is not.
+
+sectors:
+  ai:
+    - FET
+    - AGIX
+    - OCEAN
+    - RNDR
+    - RENDER
+    - TAO
+    - AKT
+    - ARKM
+    - WLD
+    - NMR
+    - GRT
+    - PHB
+    - AI
+    - VVV
+  defi:
+    - UNI
+    - AAVE
+    - MKR
+    - SKY
+    - CRV
+    - SNX
+    - COMP
+    - LDO
+    - PENDLE
+    - ENA
+    - CAKE
+    - DYDX
+    - GMX
+    - JUP
+    - RAY
+    - AERO
+    - VELO
+    - SUSHI
+    - BAL
+    - 1INCH
+    - MORPHO
+    - EIGEN
+    - ETHFI
+    - JTO
+    - FXS
+    - RUNE
+    - OSMO
+    - HYPE
+  depin:
+    - HNT
+    - IOTX
+    - AR
+    - FIL
+    - STORJ
+    - DIMO
+    - GRASS
+    - IO
+    - ATH
+  rwa:
+    - ONDO
+    - POLYX
+    - CFG
+    - PAXG
+    - OM
+    - PLUME
+    - USUAL
+  gaming:
+    - IMX
+    - GALA
+    - AXS
+    - SAND
+    - MANA
+    - ENJ
+    - PIXEL
+    - BIGTIME
+    - PRIME
+    - RONIN
+    - RON
+    - APE
+    - YGG
+    - MAGIC
+    - ILV
+  l1:
+    - BTC
+    - ETH
+    - SOL
+    - AVAX
+    - ADA
+    - DOT
+    - ATOM
+    - NEAR
+    - APT
+    - SUI
+    - SEI
+    - TIA
+    - INJ
+    - TON
+    - ALGO
+    - EGLD
+    - FTM
+    - S
+    - KAS
+    - ICP
+    - HBAR
+    - TRX
+    - XLM
+    - XRP
+    - LTC
+    - BCH
+    - ETC
+    - MOVE
+    - BERA
+    - MONAD
+    - CELO
+    - FLOW
+    - KAIA
+    - VET
+  l2:
+    - ARB
+    - OP
+    - MATIC
+    - POL
+    - STRK
+    - ZK
+    - MANTA
+    - METIS
+    - BLAST
+    - MODE
+    - SCR
+    - TAIKO
+    - LRC
+    - SKL
+    - CYBER
+    - FORM
+  privacy:
+    - XMR
+    - ZEC
+    - DASH
+    - SCRT
+    - ROSE
+    - DUSK
+  memecoin:
+    - DOGE
+    - SHIB
+    - PEPE
+    - WIF
+    - BONK
+    - FLOKI
+    - MEME
+    - BOME
+    - MEW
+    - POPCAT
+    - NEIRO
+    - TURBO
+    - BRETT
+    - PNUT
+    - GOAT
+    - ACT
+    - CHILLGUY
+    - MOODENG
+    - FARTCOIN
+    - SPX
+    - TRUMP
+    - MELANIA
+  infrastructure:
+    - LINK
+    - PYTH
+    - API3
+    - BAND
+    - QNT
+    - ZRO
+    - W
+    - AXL
+    - CELR
+    - ANKR
+    - POKT
+  exchange:
+    - BNB
+    - OKB
+    - CRO
+    - KCS
+    - GT
+    - MX
+
+# Sector index construction:
+#   - equal-weight the daily returns of every mapped, L1-surviving member
+#   - require at least this many members or the sector index is unreliable
+min_members_for_index: 3
+# Benchmark every sector against this asset (relative strength).
+benchmark_asset: "BTC"

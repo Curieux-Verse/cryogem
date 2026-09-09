@@ -1,0 +1,95 @@
+# ==============================================================================
+# EVERY numeric threshold in this system lives in this file.
+# Rule (IMPLEMENTATION_SPEC §0.1.4): never hardcode a number in a module.
+# Each value is either SOURCED (citation given) or marked TUNE_ME.
+# Changing a value here is a research decision — record it in docs/DECISIONS.md.
+# ==============================================================================
+
+layer1:
+  # SOURCED: published funding-arb risk screener (warn 0.5 / danger 1.0)
+  oi_to_mcap_fail: 1.0
+  oi_to_mcap_warn: 0.5
+
+  # SOURCED: same screener (warn 15x / danger 40x)
+  perp_to_spot_vol_fail: 40.0
+  perp_to_spot_vol_warn: 15.0
+
+  # SOURCED: same screener
+  min_mcap_usd: 30000000
+  min_contract_age_days: 60
+
+  # SOURCED: RAVE (9 wallets ~95% of 1B supply; 3 team wallets 89.74%),
+  #          TRB (~20 whales ~95% of a 2.75M float).
+  # TUNE_ME: 0.60 chosen to catch both cases with margin.
+  top10_holder_share_fail: 0.60
+
+  # TUNE_ME: low-float / high-FDV trap literature.
+  min_circulating_ratio: 0.30
+
+  # SOURCED: Keyrock, 16,000+ unlock events across 40 tokens — ~90% followed by
+  # negative price pressure; team unlocks worst (to -25%); the decline typically
+  # BEGINS ~30 days before the date. Hence a 30-day lookahead, not 7.
+  unlock_lookahead_days: 30
+  unlock_pct_circulating_fail: 0.05
+  unlock_fail_recipient_types: ["team", "investor"]
+
+  # SOURCED: RAVE — ~$6B of market cap destroyed on ~$52M of liquidations.
+  # NOTE: liquidation feeds are throttled at source (one print/sec/symbol), so
+  # this ratio is a LOWER BOUND. A FAIL is high-confidence; a PASS is not.
+  mcap_to_liquidation_ratio_fail: 50.0
+  mcap_to_liq_trigger_move_pct: 1.0   # only evaluate on 24h moves > 100%
+
+  orphan_perp_fails: true             # no spot pair => auto-FAIL
+  require_mcap_data: true             # not in CoinGecko top ~2000 => auto-FAIL
+
+# Weights sum to 110 DELIBERATELY — normalise to 100 after computing.
+# If a block is unavailable for an asset, renormalise over the remaining blocks.
+layer2_weights:
+  fundamental: 35
+  supply: 25
+  sector: 15
+  events: 10
+  attention: 15
+  drawdown: 10
+
+layer2:
+  # SOURCED: sentiment's predictive power concentrates at extremes, not the
+  # middle of the distribution. Attention contributes only when |z| exceeds this.
+  attention_zscore_gate: 2.0
+  attention_zscore_window_days: 30
+  # TUNE_ME: bonus percentile points for the inverse signal almost nobody screens.
+  unlock_overhang_cleared_bonus: 25.0
+  # TUNE_ME: any block-score pair above this |rho| is measuring one thing twice.
+  redundancy_corr_threshold: 0.8
+  redundancy_min_days: 30
+
+layer3:
+  funding_negative_extreme_pctile: 5.0
+  oi_change_extreme_pctile: 95.0
+  min_depth_2pct_usd: 50000          # TUNE_ME — below this, no position is exitable
+  trendline_min_touches: 3
+  trendline_tolerance_pct: 0.02      # TUNE_ME — how close a high must sit to the line
+  swing_window_bars: 3               # bars each side for a swing-high pivot
+
+collectors:
+  derivatives_interval_minutes: 5
+  market_interval_hours: 24
+  fundamentals_interval_hours: 24
+  events_interval_hours: 12
+  attention_interval_hours: 6
+  news_interval_minutes: 15
+  # Freshness assertion: refuse to screen on stale data (§15.4.1).
+  max_data_age_hours: 26
+  consecutive_failures_before_alert: 3
+
+journal:
+  horizons: ["1d", "7d", "30d", "90d"]
+  top_n_to_journal: 25               # journal more than you report, for statistics
+  report_top_n: 15
+
+backtest:
+  taker_fee_bps: 5.0                 # 0.05% — Binance futures taker, no VIP tier
+  slippage_model: "depth"            # size slippage against RECORDED depth, never printed price
+  regime_btc_up_pct: 0.05            # 30d BTC return above this = "up" regime
+  regime_btc_down_pct: -0.05
+  holdout_fraction: 0.3333           # develop on first 2/3, test ONCE on final 1/3

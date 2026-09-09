@@ -1,0 +1,20 @@
+# Pinned. See IMPLEMENTATION_SPEC.md §2.1.
+httpx==0.28.1
+tenacity==9.1.2
+pyrate-limiter==3.7.0
+pandas==2.2.3
+numpy==2.2.6
+pydantic==2.11.7
+pydantic-settings==2.10.1
+PyYAML==6.0.2
+structlog==25.4.0
+typer==0.16.0
+python-dotenv==1.1.1
+APScheduler==3.11.0
+libsql-client==0.3.1
+
+# --- test / dev ---
+pytest==8.4.1
+pytest-asyncio==1.1.0
+respx==0.22.0
+freezegun==1.5.2
