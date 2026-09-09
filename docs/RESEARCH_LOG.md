@@ -38,7 +38,33 @@ After 14 days of `news_item` rows, report the `lag_seconds` percentiles.
 Expected: median well above 15 seconds, which is the empirical answer to
 "can I trade news?" — from the user's own data rather than an assertion.
 
-- p50: `____` · p95: `____` · n: `____` · measured on: `____`
+**First measurement, 2026-09-09** (single poll, n=74, from the CoinDesk,
+Cointelegraph and The Block RSS feeds):
+
+| statistic | seconds | human |
+|---|---:|---|
+| freshest item in the poll | 1,476 | ~24.6 min |
+| p50 | 25,004 | ~6.9 hours |
+| p95 | 101,444 | ~28.2 hours |
+
+**Read this carefully before drawing the conclusion.** This is the *age of each
+item at the moment we first saw it*. A first poll against an RSS feed returns
+that feed's entire current window, which is mostly a backlog published over the
+preceding day rather than items we were late to. The p50 and p95 are therefore
+an upper bound on steady-state latency, not a measurement of it.
+
+The figure that does mean something today is the **freshest item: ~25 minutes
+old**. Even the newest thing in the feed was published long after the move it
+describes. Nothing here arrives within the seconds a listing takes, and the
+floor is bounded by the poll interval anyway. Both point the same way, which is
+why news is confined to journal labelling and is never a trigger.
+
+**The measurement that settles it** needs steady-state data: once the collector
+has run continuously for a few days, recompute over items whose
+`fetched_at_utc` is at least 24h after collection began, so the initial backlog
+is excluded. Record it here and replace this note.
+
+- steady-state p50: `____` · p95: `____` · n: `____` · measured on: `____`
 
 ### Trigger lag (cron-job.org intended vs workflow actual start)
 p95 should stay under 3 minutes. Tens of minutes means an `on: schedule`
