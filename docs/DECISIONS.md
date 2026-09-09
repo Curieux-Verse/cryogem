@@ -138,3 +138,38 @@ still used for the L2 fundamental block.
 Unlock sources are therefore a chain, tried in order and degrading gracefully:
 CoinGlass (paid, if a key exists) → DefiLlama Pro (if a key exists) → the
 manual `config/unlock_calendar.yaml` → nothing, which triggers D-007.
+
+---
+
+## D-009 — The liquidation trigger is a RATIO move, not a percentage move
+**Date:** 2026-09-09 · **Status:** accepted · **Corrects a flaw in the spec's threshold**
+
+**The spec said:** evaluate `L1_MCAP_LIQ` "during any 24h move >100%".
+
+**The flaw:** a price cannot fall more than 100%. Written as
+`abs(price_change_24h_pct) > 100`, the trigger can only ever fire on an UPWARD
+move. RAVE fell about 96% — the exact event this check exists to detect — and
+would have been recorded as "not applicable" and skipped.
+
+The regression test `test_rave_liquidation_ratio_is_the_signature` caught it:
+the check returned `passed=True, reason='not applicable: 24h move under 100%'`
+on the RAVE collapse itself.
+
+**What the code does now.** The trigger is expressed as a ratio move, so that a
+doubling and a halving count as the same size of event in opposite directions:
+
+```
+ratio_move   = 1 + pct_change/100
+up_trigger   = 1 + trigger        # 2.0   at trigger = 1.0
+down_trigger = 1 / up_trigger     # 0.5   at trigger = 1.0
+fires when ratio_move >= 2.0 or <= 0.5
+```
+
+RAVE at −96% gives `ratio_move = 0.04`, which fires. A +150% move gives 2.5,
+which also fires. A +40% move gives 1.4, which does not.
+
+**Why it matters beyond this one case:** the asymmetry would have silently
+removed every crash from the check's coverage while leaving it looking
+operational, and the check's whole purpose is detecting a collapse whose market
+cap loss is impossible against its liquidation volume. It would have failed
+exactly when it was needed.

@@ -42,6 +42,15 @@ layer1:
   orphan_perp_fails: true             # no spot pair => auto-FAIL
   require_mcap_data: true             # not in CoinGecko top ~2000 => auto-FAIL
 
+  # See DECISIONS.md D-007. Distinguishes an asset-level data gap (which FAILS
+  # that asset, per spec) from a source-level outage (which disables the check
+  # for the run and says so loudly). If fewer than this share of the universe
+  # has usable input for a check, the check is dark rather than failing
+  # everything -- disqualifying the whole market for OUR outage is not a
+  # judgement about the market.
+  # TUNE_ME.
+  min_source_coverage: 0.20
+
 # Weights sum to 110 DELIBERATELY — normalise to 100 after computing.
 # If a block is unavailable for an asset, renormalise over the remaining blocks.
 layer2_weights:

@@ -92,6 +92,7 @@ class Layer1Thresholds(BaseModel):
     mcap_to_liq_trigger_move_pct: float
     orphan_perp_fails: bool
     require_mcap_data: bool
+    min_source_coverage: float
 
     @model_validator(mode="after")
     def _sanity(self) -> "Layer1Thresholds":

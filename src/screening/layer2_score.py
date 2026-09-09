@@ -1,0 +1,515 @@
+"""
+# WHY: ------------------------------------------------------------------------
+# Layer 2: rank the survivors. Applied ONLY to assets that cleared Layer 1.
+#
+# THE CARDINAL RULE:
+#
+#     Percentile-rank every metric WITHIN today's surviving universe.
+#     Never use an absolute threshold in Layer 2.
+#
+# Two reasons, and the second is the one people miss:
+#   * Absolute cutoffs break the moment market regime changes. "Revenue above
+#     $10M" means something different in a bull market and a bear one.
+#   * Funding-rate research found predictive power limited for single-asset
+#     prediction (explaining ~12.5% of 7-day price variation, declining after)
+#     but noted the data is materially more useful applied CROSS-SECTIONALLY.
+#     The signal is in the ordering, not the level.
+#
+# WEIGHT RENORMALISATION. The six weights sum to 110 deliberately, then
+# normalise to 100. When a block is unavailable for an asset -- most often a
+# token with no revenue model -- that block scores None and its weight is
+# redistributed across the rest, rather than scoring zero.
+#
+# That distinction decides the whole ranking. A zero says "this asset has bad
+# fundamentals". A None says "this asset has no fundamentals to measure". A
+# token with no revenue model is not a token with failing revenue, and scoring
+# it zero would systematically bury every non-revenue asset beneath every
+# revenue one, which is a bet the data has not justified.
+#
+# REDUNDANCY. After 30 days, correlate the six block scores. Any pair above
+# |rho| 0.8 is measuring one thing twice: applying iterative factor selection to
+# 36 crypto return-predictive factors found two to three factors eliminated all
+# significant portfolio alphas. A six-block score with high internal correlation
+# is a three-block score wearing a costume.
+# -----------------------------------------------------------------------------
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from src.config import get_config
+from src.db.connection import Database
+from src.db.writes import json_dump, upsert
+from src.events.features import compute_all
+from src.logging_setup import get_logger
+from src.timeutil import add_days, utc_now_iso
+
+log = get_logger("screening.layer2")
+
+BLOCKS = ("fundamental", "supply", "sector", "events", "attention", "drawdown")
+
+
+def cross_sectional_percentile(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
+    """Rank 0-100 within today's universe.
+
+    NaN-safe and deliberately so: a NaN stays NaN and must NOT become 0. An
+    asset we could not measure is not an asset that measured badly, and
+    collapsing the two is the most common way a scoring layer quietly develops
+    a bias against anything with incomplete data.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    if not higher_is_better:
+        numeric = -numeric
+    return numeric.rank(pct=True, na_option="keep") * 100.0
+
+
+def _weighted_mean(values: dict[str, float | None], weights: dict[str, float]) -> float | None:
+    """Weighted mean over available components, renormalised. None if none exist."""
+    available = {k: v for k, v in values.items() if v is not None and not pd.isna(v)}
+    if not available:
+        return None
+    total_weight = sum(weights.get(k, 1.0) for k in available)
+    if total_weight <= 0:
+        return None
+    return sum(v * weights.get(k, 1.0) for k, v in available.items()) / total_weight
+
+
+class Layer2Scorer:
+    """Builds the cross-sectional score for one run date."""
+
+    def __init__(self, run_date: str) -> None:
+        cfg = get_config()
+        self.run_date = run_date
+        self.weights = cfg.thresholds.layer2_weights.as_dict()
+        self.t = cfg.thresholds.layer2
+        self.sectors = cfg.sectors
+        self.log = log.bind(run_date=run_date)
+
+    # -- blocks --------------------------------------------------------------
+    def score_fundamental(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+        """Revenue growth, fee acceleration, cheapness, usage. Weight 35.
+
+        The reference case is VVV: revenue moving from a ~$70M to a ~$100M
+        annualised run-rate inside one month, visible here before it was
+        visible in price.
+        """
+        metrics: dict[str, pd.Series] = {}
+
+        growth = (df["revenue_30d_usd"] - df["revenue_prev_30d_usd"]) / df[
+            "revenue_prev_30d_usd"
+        ].abs().replace(0, np.nan)
+        metrics["revenue_growth_30d"] = cross_sectional_percentile(growth)
+
+        # Fee acceleration: last 7 days against the trailing 30-day weekly rate.
+        acceleration = df["fees_7d_usd"] / (df["fees_30d_usd"] / 4.0).replace(0, np.nan)
+        metrics["fee_acceleration"] = cross_sectional_percentile(acceleration)
+
+        # Price-to-sales: LOWER is better, so the rank is inverted.
+        ps_ratio = df["market_cap_usd"] / df["revenue_annualised"].replace(0, np.nan)
+        metrics["price_to_sales"] = cross_sectional_percentile(ps_ratio, higher_is_better=False)
+
+        # TVL is a CAPITAL SNAPSHOT, not activity: it rises when prices rise
+        # with no new deposits. Included for context, weighted low.
+        metrics["tvl"] = cross_sectional_percentile(df["tvl_usd"])
+        metrics["active_addresses"] = cross_sectional_percentile(df["active_addresses_24h"])
+
+        component_weights = {
+            "revenue_growth_30d": 3.0,
+            "fee_acceleration": 2.0,
+            "price_to_sales": 2.0,
+            "active_addresses": 1.5,
+            "tvl": 0.5,
+        }
+        scores = self._combine(df.index, metrics, component_weights)
+        # An asset with no revenue model scores None here, not zero.
+        scores[df["has_fundamentals"] == 0] = np.nan
+        return scores, metrics
+
+    def score_supply(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+        """Emissions direction, burn, and distance from the last cliff. Weight 25.
+
+        Reference case: VVV cut emissions 10M -> 8M -> 6M -> 3M -> 2.5M -> 2M
+        per year while burning ~33.87M tokens, about 41.85% of total supply.
+        """
+        metrics: dict[str, pd.Series] = {}
+
+        trajectory_score = df["emissions_trajectory"].map(
+            {"falling": 100.0, "flat": 50.0, "rising": 0.0}
+        )
+        metrics["emissions_trajectory"] = trajectory_score
+        metrics["burned_pct"] = cross_sectional_percentile(df["burned_pct_of_total"])
+        metrics["days_since_unlock"] = cross_sectional_percentile(df["days_since_last_major_unlock"])
+        metrics["float_ratio"] = cross_sectional_percentile(
+            df["circulating_supply"] / df["total_supply"].replace(0, np.nan)
+        )
+
+        # Staked supply reduces effective float -- but only if it is not the
+        # team's own stake, which reduces nothing and hides concentration.
+        staked = df["staked_ratio"].where(df["staked_is_team_controlled"] != 1)
+        metrics["staked_ratio"] = cross_sectional_percentile(staked)
+
+        scores = self._combine(
+            df.index,
+            metrics,
+            {
+                "emissions_trajectory": 3.0,
+                "burned_pct": 2.0,
+                "days_since_unlock": 2.0,
+                "float_ratio": 1.5,
+                "staked_ratio": 1.0,
+            },
+        )
+
+        # The inverse signal: every known cliff has passed, so supply pressure
+        # structurally ends. Plausibly the strongest single positive feature in
+        # the system -- measured in the journal rather than assumed.
+        bonus = df["unlock_overhang_cleared"].astype("boolean").fillna(False).astype(bool)
+        scores = (scores + bonus * self.t.unlock_overhang_cleared_bonus).clip(upper=100.0)
+        metrics["unlock_overhang_cleared"] = bonus.astype(float) * 100.0
+        return scores, metrics
+
+    def score_sector(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+        """The asset's sector's relative strength against BTC. Weight 15.
+
+        Sector flows dominate price action over weeks and months even when an
+        individual project's fundamentals are sound. A good chart in a bleeding
+        sector should not rank highly, and this block is what prevents it.
+        """
+        metrics: dict[str, pd.Series] = {}
+        sector_of = df.index.map(self.sectors.sector_of)
+
+        for window in ("7d", "30d"):
+            returns = df[f"return_{window}"]
+            by_sector = returns.groupby(sector_of).agg(["mean", "count"])
+            # A sector index built from one or two members is noise wearing a
+            # sector's name.
+            usable = by_sector[by_sector["count"] >= self.sectors.min_members_for_index]["mean"]
+
+            benchmark = returns.get(self.sectors.benchmark_asset, np.nan)
+            relative = usable - (benchmark if pd.notna(benchmark) else usable.mean())
+            mapped = pd.Series(sector_of, index=df.index).map(relative)
+            # 'unclassified' is not a sector: score it None, never the mean.
+            mapped[pd.Series(sector_of, index=df.index) == "unclassified"] = np.nan
+            metrics[f"sector_rs_{window}"] = cross_sectional_percentile(mapped)
+
+        scores = self._combine(
+            df.index, metrics, {"sector_rs_7d": 1.0, "sector_rs_30d": 1.5}
+        )
+        return scores, metrics
+
+    def score_events(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+        """Distance from the next cliff, and scheduled catalysts. Weight 10."""
+        metrics: dict[str, pd.Series] = {}
+
+        # No scheduled unlock at all is the best case, so NaN maps to the top
+        # rather than being dropped -- but only when we HAVE event data for the
+        # asset, which L1 already required.
+        # No scheduled unlock is the BEST case, so a missing value maps to
+        # the top of the range rather than being dropped. Cast first:
+        # fillna on an object column is deprecated and downcasts silently.
+        days = pd.to_numeric(df["days_to_next_major_unlock"], errors="coerce").fillna(9999)
+        metrics["days_to_next_unlock"] = cross_sectional_percentile(days)
+        metrics["overhang_cleared"] = (
+            df["unlock_overhang_cleared"].astype("boolean").fillna(False).astype(float) * 100.0
+        )
+        metrics["positive_catalyst"] = (
+            df["positive_catalyst_30d"].astype("boolean").fillna(False).astype(float) * 100.0
+        )
+        # A monitoring tag is a soft exchange warning for elevated-volatility
+        # assets and often precedes delisting. Strong negative.
+        metrics["monitoring_tag"] = (
+            1.0 - df["monitoring_tag_active"].astype("boolean").fillna(False).astype(float)
+        ) * 100.0
+
+        scores = self._combine(
+            df.index,
+            metrics,
+            {
+                "days_to_next_unlock": 2.0,
+                "overhang_cleared": 2.0,
+                "positive_catalyst": 1.0,
+                "monitoring_tag": 3.0,
+            },
+        )
+        return scores, metrics
+
+    def score_attention(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+        """Social attention, z-scored and GATED. Weight 15.
+
+        The gate matters as much as the metric: sentiment's predictive power
+        concentrates at extreme states, so an asset sitting in the middle of its
+        own distribution contributes nothing rather than contributing noise.
+        """
+        metrics: dict[str, pd.Series] = {}
+        z = pd.to_numeric(df["social_volume_z"], errors="coerce")
+        gated = z.where(z.abs() > self.t.attention_zscore_gate)
+        metrics["social_volume_z"] = cross_sectional_percentile(gated)
+        metrics["social_dominance"] = cross_sectional_percentile(df["social_dominance"])
+        scores = self._combine(
+            df.index, metrics, {"social_volume_z": 2.0, "social_dominance": 1.0}
+        )
+        return scores, metrics
+
+    def score_drawdown(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+        """The fallen-angel setup. Weight 10.
+
+        A nine-year study of 1,160 cryptocurrencies found a size effect, an
+        illiquidity premium, and a distinctive REVERSAL effect that challenges
+        the established momentum effect.
+
+        Note precisely what that means, because it is easy to over-read: the
+        effect is cross-sectional, on average, over weekly rebalances. It does
+        NOT promise that any individual beaten-down chart will bounce. Weighted
+        10 for that reason.
+        """
+        metrics: dict[str, pd.Series] = {}
+        # More negative pct_below_ath = further from the high = better setup.
+        metrics["pct_below_ath"] = cross_sectional_percentile(
+            df["pct_below_ath"], higher_is_better=False
+        )
+        metrics["overhang_interaction"] = (
+            df["unlock_overhang_cleared"].astype("boolean").fillna(False).astype(float) * 100.0
+        )
+        scores = self._combine(
+            df.index, metrics, {"pct_below_ath": 2.0, "overhang_interaction": 1.0}
+        )
+        return scores, metrics
+
+    @staticmethod
+    def _combine(
+        index: pd.Index, metrics: dict[str, pd.Series], weights: dict[str, float]
+    ) -> pd.Series:
+        """Weighted mean across a block's metrics, per asset, NaN-aware."""
+        frame = pd.DataFrame(metrics, index=index)
+        weight_vector = pd.Series({k: weights.get(k, 1.0) for k in frame.columns})
+        mask = frame.notna()
+        weighted_sum = (frame.fillna(0.0) * weight_vector).sum(axis=1)
+        weight_total = (mask * weight_vector).sum(axis=1)
+        return (weighted_sum / weight_total.replace(0, np.nan)).astype(float)
+
+    # -- orchestration -------------------------------------------------------
+    def score(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Score every survivor. Returns a ranked frame."""
+        block_scores: dict[str, pd.Series] = {}
+        percentiles: dict[str, dict[str, pd.Series]] = {}
+
+        for block, scorer in (
+            ("fundamental", self.score_fundamental),
+            ("supply", self.score_supply),
+            ("sector", self.score_sector),
+            ("events", self.score_events),
+            ("attention", self.score_attention),
+            ("drawdown", self.score_drawdown),
+        ):
+            scores, metrics = scorer(df)
+            block_scores[block] = scores
+            percentiles[block] = metrics
+
+        blocks = pd.DataFrame(block_scores, index=df.index)
+
+        # Renormalise per asset over the blocks that ARE available, so a token
+        # with no revenue model is not buried beneath one that merely has bad
+        # revenue. This is the most consequential line in the module.
+        weight_vector = pd.Series({b: self.weights[b] for b in BLOCKS})
+        mask = blocks.notna()
+        weighted_sum = (blocks.fillna(0.0) * weight_vector).sum(axis=1)
+        weight_total = (mask * weight_vector).sum(axis=1)
+        total = (weighted_sum / weight_total.replace(0, np.nan)).astype(float)
+
+        out = blocks.copy()
+        out["total_score"] = total
+        out["blocks_available"] = mask.sum(axis=1)
+        out = out.sort_values("total_score", ascending=False, na_position="last")
+        out["rank"] = range(1, len(out) + 1)
+        out.attrs["percentiles"] = percentiles
+        return out
+
+
+def load_scoring_frame(db: Database, run_date: str, survivors: list[str]) -> pd.DataFrame:
+    """Assemble every L2 input for the survivors into one frame."""
+    if not survivors:
+        return pd.DataFrame()
+
+    placeholders = ",".join("?" for _ in survivors)
+
+    def latest(table: str, columns: str) -> pd.DataFrame:
+        snapshot_date = db.scalar(
+            f"SELECT MAX(snapshot_date) FROM {table} WHERE snapshot_date <= ?", (run_date,)
+        )
+        if not snapshot_date:
+            return pd.DataFrame()
+        rows = db.query(
+            f"SELECT base_asset, {columns} FROM {table} "
+            f"WHERE snapshot_date = ? AND base_asset IN ({placeholders})",
+            [snapshot_date, *survivors],
+        )
+        frame = pd.DataFrame(rows)
+        return frame.set_index("base_asset") if not frame.empty else frame
+
+    market = latest(
+        "market_snapshot",
+        "market_cap_usd, circulating_supply, total_supply, pct_below_ath, price_usd",
+    )
+    fundamentals = latest(
+        "fundamentals_snapshot",
+        "tvl_usd, fees_7d_usd, fees_30d_usd, revenue_30d_usd, revenue_prev_30d_usd, "
+        "revenue_annualised, active_addresses_24h, has_fundamentals",
+    )
+    supply = latest(
+        "supply_metrics",
+        "emissions_trajectory, burned_pct_of_total, staked_ratio, staked_is_team_controlled",
+    )
+    attention = latest("attention_snapshot", "social_volume_z, social_dominance")
+
+    df = pd.DataFrame(index=pd.Index(survivors, name="base_asset"))
+    for source in (market, fundamentals, supply, attention):
+        if not source.empty:
+            df = df.join(source[~source.index.duplicated(keep="first")], how="left")
+
+    # Event features come from the point-in-time-filtered helper, never raw SQL.
+    events = compute_all(db, survivors, run_date)
+    df["days_to_next_major_unlock"] = [
+        events[a].days_to_next_major_unlock if a in events else None for a in df.index
+    ]
+    df["days_since_last_major_unlock"] = [
+        events[a].days_since_last_major_unlock if a in events else None for a in df.index
+    ]
+    df["unlock_overhang_cleared"] = [
+        events[a].unlock_overhang_cleared if a in events else False for a in df.index
+    ]
+    df["positive_catalyst_30d"] = [
+        events[a].positive_catalyst_30d if a in events else False for a in df.index
+    ]
+    df["monitoring_tag_active"] = [
+        events[a].monitoring_tag_active if a in events else False for a in df.index
+    ]
+
+    df = _attach_returns(db, df, run_date)
+
+    for column in (
+        "has_fundamentals", "tvl_usd", "fees_7d_usd", "fees_30d_usd", "revenue_30d_usd",
+        "revenue_prev_30d_usd", "revenue_annualised", "active_addresses_24h",
+        "emissions_trajectory", "burned_pct_of_total", "staked_ratio",
+        "staked_is_team_controlled", "social_volume_z", "social_dominance",
+        "market_cap_usd", "circulating_supply", "total_supply", "pct_below_ath",
+    ):
+        if column not in df.columns:
+            df[column] = np.nan
+    df["has_fundamentals"] = df["has_fundamentals"].fillna(0)
+    return df
+
+
+def _attach_returns(db: Database, df: pd.DataFrame, run_date: str) -> pd.DataFrame:
+    """7d and 30d returns, for the sector relative-strength block."""
+    now = df["price_usd"] if "price_usd" in df.columns else pd.Series(dtype=float)
+    for window, days in (("7d", 7), ("30d", 30)):
+        then = add_days(run_date, -days)
+        rows = db.query(
+            "SELECT base_asset, close_usd FROM price_daily WHERE snapshot_date = "
+            "(SELECT MAX(snapshot_date) FROM price_daily WHERE snapshot_date <= ?)",
+            (then,),
+        )
+        past = {r["base_asset"]: r["close_usd"] for r in rows}
+        df[f"return_{window}"] = [
+            (now.get(a) - past[a]) / past[a]
+            if a in past and past[a] and pd.notna(now.get(a))
+            else np.nan
+            for a in df.index
+        ]
+    return df
+
+
+def run_layer2(db: Database, run_date: str, survivors: list[str]) -> list[dict[str, Any]]:
+    """Score and persist the Layer-2 ranking. Returns ranked rows."""
+    if not survivors:
+        log.warning("layer2_no_survivors", run_date=run_date)
+        return []
+
+    df = load_scoring_frame(db, run_date, survivors)
+    scored = Layer2Scorer(run_date).score(df)
+    percentiles = scored.attrs.get("percentiles", {})
+    fetched_at = utc_now_iso()
+
+    rows: list[dict[str, Any]] = []
+    for asset, row in scored.iterrows():
+        per_asset = {
+            f"{block}.{metric}": _clean(series.get(asset))
+            for block, metrics in percentiles.items()
+            for metric, series in metrics.items()
+        }
+        rows.append(
+            {
+                "run_date": run_date,
+                "base_asset": asset,
+                "total_score": _clean(row["total_score"]) or 0.0,
+                "score_fundamental": _clean(row["fundamental"]),
+                "score_supply": _clean(row["supply"]),
+                "score_sector": _clean(row["sector"]),
+                "score_drawdown": _clean(row["drawdown"]),
+                "score_events": _clean(row["events"]),
+                "score_attention": _clean(row["attention"]),
+                "rank": int(row["rank"]),
+                "universe_size": len(scored),
+                "percentiles": json_dump(per_asset),
+                "fetched_at_utc": fetched_at,
+            }
+        )
+
+    upsert(db, "layer2_result", rows)
+    log.info("layer2_complete", survivors=len(survivors), ranked=len(rows))
+    return rows
+
+
+def _clean(value: Any) -> float | None:
+    """NaN must reach the database as NULL, never as a float that sorts oddly."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(number) else round(number, 4)
+
+
+def block_correlation_report(db: Database, min_days: int | None = None) -> dict[str, Any]:
+    """Correlate the six block scores.
+
+    Any pair above the threshold is measuring one thing twice. Applying
+    iterative factor selection to 36 crypto return-predictive factors found
+    two to three factors eliminated all significant portfolio alphas -- a
+    six-block score with high internal correlation is a three-block score
+    wearing a costume.
+    """
+    cfg = get_config().thresholds.layer2
+    required = min_days or cfg.redundancy_min_days
+    rows = db.query(
+        "SELECT run_date, score_fundamental, score_supply, score_sector, "
+        "score_events, score_attention, score_drawdown FROM layer2_result"
+    )
+    frame = pd.DataFrame(rows)
+    days = frame["run_date"].nunique() if not frame.empty else 0
+    if days < required:
+        return {"ready": False, "days": days, "required": required, "pairs": []}
+
+    matrix = frame.drop(columns=["run_date"]).corr()
+    flagged = [
+        {"a": a, "b": b, "rho": round(float(matrix.loc[a, b]), 3)}
+        for i, a in enumerate(matrix.columns)
+        for b in matrix.columns[i + 1 :]
+        if pd.notna(matrix.loc[a, b]) and abs(matrix.loc[a, b]) > cfg.redundancy_corr_threshold
+    ]
+    return {"ready": True, "days": days, "matrix": matrix.round(3).to_dict(), "pairs": flagged}
+
+
+__all__ = [
+    "BLOCKS",
+    "Layer2Scorer",
+    "block_correlation_report",
+    "cross_sectional_percentile",
+    "load_scoring_frame",
+    "run_layer2",
+]
