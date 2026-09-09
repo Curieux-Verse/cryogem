@@ -86,3 +86,37 @@ Confirm each on the first real collection and record the answer above.
 - **Secondary:** logging a CJK symbol to a cp1252 Windows console raised
   `UnicodeEncodeError` and could kill a collector mid-run over a log line. The
   console stream is now reconfigured to UTF-8 with `backslashreplace`.
+
+## 2026-09-09 — Binance announcement CMS: shape changed and dates removed
+
+- **Document said:** poll
+  `.../cms/article/catalog/list/query?catalogId=48...` and read articles with a
+  `releaseDate`.
+- **Observed** (live, 200 OK, `total: 2253`):
+  1. Articles are at `data.articles`, **not** `data.catalogs[0].articles`.
+  2. **There is no date field at all.** `releaseDate` and `publishDate` are both
+     absent/None on every article. Available keys: `id`, `code`, `title`,
+     `imageLink`, `shortLink`, `body`, `type`, `catalogId`, `catalogName`,
+     `publishDate` (null), `footer`.
+- **Code now does:**
+  - Accepts both payload shapes, so an upstream revert does not silently empty
+    the calendar.
+  - Resolves the date in order: real date field, then a `YYYY-MM-DD` parsed out
+    of the title (Binance embeds it in many), then **undated**.
+  - An undated announcement is stored with `confidence='expected'` and our
+    discovery time, and the run warns with a count. It is **never** stamped
+    with today's date dressed up as a publication time.
+- **Impact:**
+  - The news-lag distribution cannot be measured from this endpoint any more,
+    because there is no publication timestamp to subtract. Lag measurement now
+    depends on the Tier-3 RSS/CryptoPanic feeds, which do carry `published_at`.
+  - `L1_AGE` is unaffected: it reads `onboardDate` from `exchangeInfo`, which is
+    authoritative, not from announcements. That is why the check was wired to
+    exchangeInfo in the first place.
+- **Secondary finding:** "Binance Will **Add** X on Earn, Buy Crypto, Convert,
+  VIP Loan and Margin" is not a listing -- the asset is already trading and is
+  merely reaching another product. A bare `will add` pattern produced false
+  listing events for long-listed assets (AERO). The classifier now excludes
+  product-addition titles while exempting genuine
+  "USD-Margined ... Perpetual Contract" launches, which the word "margin" would
+  otherwise catch.

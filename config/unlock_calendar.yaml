@@ -1,0 +1,36 @@
+# Manually-curated unlock calendar.
+#
+# WHY THIS FILE EXISTS: every free unlock API is now paywalled (see D-008).
+# This is the honest fallback -- events entered by hand, with the date WE
+# learned of them recorded truthfully.
+#
+# ------------------------------------------------------------------------
+# first_seen MUST be the date you actually added the row. Never backdate it.
+# ------------------------------------------------------------------------
+# The backtester filters events on `first_seen_utc <= as_of_date`. Backdating
+# an entry to "when the schedule was published" hands the backtest information
+# the live system did not have, and a backtest with look-ahead bias is worse
+# than no backtest: it produces confident, wrong numbers.
+#
+# recipient_type is the single most predictive field in the unlock literature:
+#   team       - worst, drawdowns to about -25%
+#   investor   - milder; funds often use OTC or hedge in advance
+#   ecosystem  - averages slightly POSITIVE; funds grants and liquidity
+#   community  - varies
+#   null       - unknown. LEAVE IT NULL. Never guess; set confidence: expected.
+#
+# Impact typically BEGINS about 30 days before the date and stabilises within
+# roughly two weeks after, so by release day the market has often repriced.
+# That is why L1 looks 30 days ahead rather than 7.
+
+events: []
+#  - base_asset: EXAMPLE
+#    event_type: unlock_cliff        # unlock_cliff | unlock_linear | emissions_change | burn
+#    event_date_utc: "2026-11-01"
+#    recipient_type: team            # or null if genuinely unknown
+#    magnitude_tokens: 25000000
+#    pct_of_circulating: 0.081       # 8.1% of circulating supply
+#    description: "Team cliff, 12-month lock expiry"
+#    confidence: confirmed           # confirmed | expected | rumoured
+#    first_seen: "2026-09-09"        # the day YOU added this row
+#    source: "project docs / tokenomics page URL"

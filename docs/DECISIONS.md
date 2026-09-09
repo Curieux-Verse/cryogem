@@ -84,3 +84,57 @@ operating rule 8 (trust reality over the document).
 | Turso free-tier limits as read on the vendor page | R8 | |
 | Repo visibility choice (public recommended) | Actions minutes | |
 | Oracle Cloud / Pi availability for Tier A | Optional 5-min tier | |
+
+---
+
+## D-007 — Source-level unavailability is not the same as asset-level missing data
+**Date:** 2026-09-09 · **Status:** accepted · **Deviates from a literal reading of spec §9**
+
+Spec §9 says: *"If a check's input is unavailable, do not silently pass. Emit
+`CheckResult(passed=False, reason='data_unavailable')` and count it as a FAIL.
+A screener that cannot see is a screener that should say no."*
+
+That rule is right for a **per-asset** gap and wrong for a **source outage**.
+
+**What forced the decision:** every free unlock source is now paywalled.
+`api.llama.fi/emissions` and `/emission/{protocol}` both return `402 Upgrade to
+the paid API plan` (verified 2026-09-09). With no unlock data at all, a literal
+reading fails `L1_UNLOCK` for 100% of the universe, the survivor rate goes to
+zero, and the system produces nothing — while also violating the Phase 4
+acceptance criterion that survivors land between 20% and 50%.
+
+**What the code does instead.** Each check reports coverage across the universe:
+
+- Coverage **above** `min_source_coverage` → the check is live, and an
+  individual asset with missing data FAILS, exactly as the spec requires. No
+  silent passes.
+- Coverage **below** it → the check is marked `source_unavailable`, excluded
+  from that day's verdict, and reported loudly: in `check_values`, in the daily
+  report's data-quality section, and on the Health page.
+
+The distinction that matters: a missing value for one asset is evidence about
+that asset. A missing value for every asset is evidence about our pipeline, and
+disqualifying the whole market for our own outage is not a judgement about the
+market.
+
+**What keeps this honest:** an unavailable check is never invisible. If
+`L1_UNLOCK` is dark, the report says so on the day it happens, so a survivor
+list is never mistaken for one screened on a complete rule set.
+
+**Consequence to accept:** while unlock data is unavailable, the highest-value
+check in the system is not running. `config/unlock_calendar.yaml` exists so
+known events can be entered by hand with an honest `first_seen_utc`, and the
+proper fix is a paid unlock source when the project justifies one.
+
+---
+
+## D-008 — DefiLlama emissions moved behind a paywall
+**Date:** 2026-09-09 · **Status:** recorded · **Answers R4**
+
+`GET https://api.llama.fi/emissions` → `402`. Same for `/emission/{slug}` and
+`/emissionsBreakdown`. TVL, fees and revenue endpoints remain free and are
+still used for the L2 fundamental block.
+
+Unlock sources are therefore a chain, tried in order and degrading gracefully:
+CoinGlass (paid, if a key exists) → DefiLlama Pro (if a key exists) → the
+manual `config/unlock_calendar.yaml` → nothing, which triggers D-007.

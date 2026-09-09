@@ -30,10 +30,12 @@ from src.collectors.binance import (
     BinanceSpotCollector,
     BinanceUniverseCollector,
 )
+from src.collectors.announcements import BinanceAnnouncementCollector
 from src.collectors.coinalyze import CoinalyzeLiquidationCollector
 from src.collectors.coingecko import CoinGeckoCollector
 from src.collectors.defillama import DefiLlamaCollector
 from src.collectors.hyperliquid import HyperliquidCollector
+from src.collectors.unlocks import UnlockCollector
 from src.logging_setup import get_logger
 
 log = get_logger("collectors.registry")
@@ -49,6 +51,8 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     "coingecko": CoinGeckoCollector,
     "defillama": DefiLlamaCollector,
     "coinalyze_liquidations": CoinalyzeLiquidationCollector,
+    "unlocks": UnlockCollector,
+    "announcements": BinanceAnnouncementCollector,
 }
 
 #: Ordered per tier. Universe first -- later collectors read it.
@@ -60,12 +64,15 @@ TIERS: dict[str, list[str]] = {
         "coingecko",
         "defillama",
         "coinalyze_liquidations",
+        "unlocks",
+        "announcements",
         "binance_derivatives",  # one daily snapshot even without the hourly tier
     ],
     # Hourly. Builds the derivatives time series.
     "hourly": [
         "binance_derivatives",
         "hyperliquid",
+        "announcements",
     ],
     # 5-minute. HOST ONLY -- never wire this to GitHub Actions.
     "fast": [
