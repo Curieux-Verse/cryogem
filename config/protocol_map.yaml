@@ -1,0 +1,40 @@
+# base_asset -> DefiLlama protocol slug.
+#
+# EXPLICIT ONLY. Never guess a mapping: attaching another protocol's revenue to
+# an asset is worse than having no revenue data, because a wrong number scores
+# highly while a missing one honestly scores None and has its weight
+# redistributed.
+#
+# To add a mapping: find the slug in https://api.llama.fi/protocols and confirm
+# that entry's `symbol` field matches the ticker before adding it here.
+# Verify each of these on the first live run; unverified rows are a guess.
+
+protocols:
+  AAVE: aave
+  UNI: uniswap
+  CRV: curve-dex
+  LDO: lido
+  PENDLE: pendle
+  ENA: ethena
+  GMX: gmx
+  JUP: jupiter-aggregator
+  RAY: raydium
+  AERO: aerodrome-v1
+  VELO: velodrome-v2
+  CAKE: pancakeswap
+  DYDX: dydx-v4
+  SNX: synthetix
+  COMP: compound-finance
+  MKR: makerdao
+  MORPHO: morpho-blue
+  ETHFI: ether.fi-stake
+  JTO: jito-liquid-staking
+  PYTH: pyth-network
+  LINK: chainlink
+  RUNE: thorchain
+  OSMO: osmosis-dex
+  HYPE: hyperliquid-perps
+  SUSHI: sushiswap
+  BAL: balancer
+  1INCH: 1inch-network
+  FXS: frax-ether

@@ -1,0 +1,6 @@
+[
+  {"symbol": "BTCUSDT", "quoteVolume": "18000000000.0", "priceChangePercent": "1.2"},
+  {"symbol": "1000PEPEUSDT", "quoteVolume": "900000000.0", "priceChangePercent": "3.4"},
+  {"symbol": "ORPHANUSDT", "quoteVolume": "450000000.0", "priceChangePercent": "180.0"},
+  {"symbol": "NEWCOINUSDT", "quoteVolume": "300000000.0", "priceChangePercent": "55.0"}
+]

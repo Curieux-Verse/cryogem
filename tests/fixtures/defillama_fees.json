@@ -1,0 +1,4 @@
+{"protocols": [
+  {"slug": "aerodrome-v1", "total24h": 900000, "total7d": 6300000, "total30d": 27000000},
+  {"slug": "uniswap", "total24h": 3000000, "total7d": 21000000, "total30d": 90000000}
+]}

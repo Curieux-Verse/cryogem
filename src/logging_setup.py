@@ -64,7 +64,16 @@ def configure_logging(level: str | None = None, json_file: str | None = None) ->
     ]
 
     # Console handler: human-readable. File handler: one JSON object per line.
-    console = logging.StreamHandler(sys.stderr)
+    # Windows consoles default to cp1252, and Binance lists perps with CJK
+    # symbols. Writing one to a cp1252 stream raises UnicodeEncodeError and
+    # would kill a collector mid-run over a log line. Reconfigure rather than
+    # let a cosmetic concern take down data collection.
+    stream = sys.stderr
+    try:
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError):  # pragma: no cover - non-TextIO stream
+        pass
+    console = logging.StreamHandler(stream)
     console.setFormatter(
         structlog.stdlib.ProcessorFormatter(
             processor=structlog.dev.ConsoleRenderer(colors=False)

@@ -1,0 +1,16 @@
+{
+  "symbols": [
+    {"symbol": "BTCUSDT", "contractType": "PERPETUAL", "quoteAsset": "USDT",
+     "baseAsset": "BTC", "status": "TRADING", "onboardDate": 1569398400000},
+    {"symbol": "1000PEPEUSDT", "contractType": "PERPETUAL", "quoteAsset": "USDT",
+     "baseAsset": "1000PEPE", "status": "TRADING", "onboardDate": 1683676800000},
+    {"symbol": "ORPHANUSDT", "contractType": "PERPETUAL", "quoteAsset": "USDT",
+     "baseAsset": "ORPHAN", "status": "TRADING", "onboardDate": 1735689600000},
+    {"symbol": "NEWCOINUSDT", "contractType": "PERPETUAL", "quoteAsset": "USDT",
+     "baseAsset": "NEWCOIN", "status": "TRADING", "onboardDate": 1786000000000},
+    {"symbol": "ETHUSDC", "contractType": "PERPETUAL", "quoteAsset": "USDC",
+     "baseAsset": "ETH", "status": "TRADING", "onboardDate": 1569398400000},
+    {"symbol": "OLDCOINUSDT", "contractType": "CURRENT_QUARTER", "quoteAsset": "USDT",
+     "baseAsset": "OLDCOIN", "status": "TRADING", "onboardDate": 1600000000000}
+  ]
+}

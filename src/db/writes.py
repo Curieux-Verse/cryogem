@@ -31,6 +31,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "universe_snapshot": ("snapshot_date", "exchange", "symbol"),
     "derivatives_snapshot": ("ts_utc", "exchange", "symbol"),
     "market_snapshot": ("snapshot_date", "base_asset"),
+    "spot_snapshot": ("snapshot_date", "exchange", "symbol"),
     "depth_snapshot": ("ts_utc", "exchange", "symbol", "market_type"),
     "fundamentals_snapshot": ("snapshot_date", "base_asset"),
     "holder_snapshot": ("snapshot_date", "base_asset"),

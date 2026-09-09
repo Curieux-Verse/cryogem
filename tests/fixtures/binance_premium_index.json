@@ -1,0 +1,10 @@
+[
+  {"symbol": "BTCUSDT", "markPrice": "62000.00", "indexPrice": "61990.00",
+   "lastFundingRate": "0.00010000", "nextFundingTime": 1789000000000},
+  {"symbol": "1000PEPEUSDT", "markPrice": "0.00850000", "indexPrice": "0.00849000",
+   "lastFundingRate": "-0.00060000", "nextFundingTime": 1789000000000},
+  {"symbol": "ORPHANUSDT", "markPrice": "1.50000000", "indexPrice": "1.49000000",
+   "lastFundingRate": "0.00250000", "nextFundingTime": 1789000000000},
+  {"symbol": "NEWCOINUSDT", "markPrice": "12.00000000", "indexPrice": "11.90000000",
+   "lastFundingRate": "0.00300000", "nextFundingTime": 1789000000000}
+]

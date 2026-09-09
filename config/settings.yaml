@@ -15,7 +15,7 @@ universe:
   quote_asset: "USDT"
   # CoinGecko pages of 250 => 8 pages ~= top 2000 by market cap.
   coingecko_pages: 8
-  coingecko_page_pause_seconds: 1.2
+  coingecko_page_pause_seconds: 3.0   # observed: 1.2s still 429s on the free tier
 
 http:
   timeout_seconds: 20.0
@@ -44,7 +44,7 @@ rate_limits:
   binance_futures: 1200
   binance_spot: 1000
   hyperliquid: 600
-  coingecko: 25          # free tier is ~30/min; stay under
+  coingecko: 10          # observed 429 at 25/min on 2026-09-09; free tier is far tighter
   defillama: 200
   coinalyze: 40          # documented hard cap
   cryptopanic: 60

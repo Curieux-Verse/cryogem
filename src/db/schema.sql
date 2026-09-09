@@ -433,3 +433,24 @@ BEFORE DELETE ON forward_return
 BEGIN
     SELECT RAISE(ABORT, 'forward_return is append-only: deletion is forbidden');
 END;
+
+-- =============================================================================
+-- SPOT MARKETS on the same venue as the perp. Kept separate from
+-- market_snapshot (CoinGecko) because L1 check 4 compares perp volume against
+-- SPOT VOLUME ON THE SAME EXCHANGE, and mixing sources there would compare a
+-- Binance perp against global spot volume -- a different, much weaker test.
+-- Absence of a row here is itself the signal: an orphan perp.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS spot_snapshot (
+    snapshot_date       TEXT NOT NULL,
+    exchange            TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    base_asset          TEXT NOT NULL,
+    price_usd           REAL,
+    volume_24h_usd      REAL,
+    price_change_24h_pct REAL,
+    fetched_at_utc      TEXT NOT NULL,
+    PRIMARY KEY (snapshot_date, exchange, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_spot_asset_date
+    ON spot_snapshot(base_asset, snapshot_date);

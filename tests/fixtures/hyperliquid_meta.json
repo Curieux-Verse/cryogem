@@ -1,0 +1,12 @@
+[
+  {"universe": [{"name": "BTC", "szDecimals": 5}, {"name": "ETH", "szDecimals": 4},
+                {"name": "HYPE", "szDecimals": 2}]},
+  [
+    {"funding": "0.0000125", "openInterest": "12500.0", "markPx": "62000.0",
+     "oraclePx": "61995.0", "premium": "0.00008", "dayNtlVlm": "900000000.0"},
+    {"funding": "0.0000100", "openInterest": "230000.0", "markPx": "2450.0",
+     "oraclePx": "2449.5", "premium": "0.00002", "dayNtlVlm": "450000000.0"},
+    {"funding": "-0.0000500", "openInterest": "5400000.0", "markPx": "28.5",
+     "oraclePx": "28.6", "premium": "-0.00035", "dayNtlVlm": "120000000.0"}
+  ]
+]

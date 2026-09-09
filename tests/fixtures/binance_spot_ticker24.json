@@ -1,0 +1,10 @@
+[
+  {"symbol": "BTCUSDT", "lastPrice": "62000.00", "quoteVolume": "2000000000.0",
+   "priceChangePercent": "1.2"},
+  {"symbol": "1000PEPEUSDT", "lastPrice": "0.0085", "quoteVolume": "40000000.0",
+   "priceChangePercent": "3.4"},
+  {"symbol": "NEWCOINUSDT", "lastPrice": "12.00", "quoteVolume": "1000000.0",
+   "priceChangePercent": "55.0"},
+  {"symbol": "SOMETHINGELSEBTC", "lastPrice": "0.01", "quoteVolume": "5.0",
+   "priceChangePercent": "0.1"}
+]

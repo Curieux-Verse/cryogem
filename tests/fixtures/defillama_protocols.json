@@ -1,0 +1,6 @@
+[
+  {"slug": "aerodrome-v1", "name": "Aerodrome", "symbol": "AERO", "tvl": 980000000,
+   "category": "Dexes"},
+  {"slug": "uniswap", "name": "Uniswap", "symbol": "UNI", "tvl": 5200000000,
+   "category": "Dexes"}
+]
