@@ -1,0 +1,100 @@
+# =============================================================================
+# WHY: the daily collection tier. This one workflow is the entire product --
+# Layers 1 and 2, the journal and the dashboard are all daily computations.
+#
+# NOTE THE TRIGGER, AND DO NOT "FIX" IT: workflow_dispatch ONLY.
+#
+# There is deliberately no `on: schedule:` anywhere in this repository.
+# GitHub's schedule event is documented as best-effort: runs commonly fire
+# 5-45 minutes late, delays of 8-14 hours occur, days get dropped during
+# high-load windows, and there have been platform-wide periods where scheduled
+# runs stopped being created at all while workflow_dispatch kept working.
+# Self-hosted runners do not help -- the queuing sits on GitHub's side.
+#
+# Triggering is external, from cron-job.org, which POSTs to
+#   /repos/{owner}/{repo}/actions/workflows/collect-daily.yml/dispatches
+# and gets a 204 back immediately.
+#
+# Two bonuses beyond punctuality: the 60-day inactivity auto-disable applies
+# only to SCHEDULED workflows, so with none in the repo there is nothing to
+# disable and no keepalive workflow is needed; and during a GitHub scheduler
+# outage, dispatch keeps working.
+#
+# Adding `schedule:` here would silently reintroduce both problems while the
+# workflow still appears to run. There is a CI guard against it in ci.yml.
+# =============================================================================
+name: collect-daily
+
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Which cadence tier to collect: daily | hourly"
+        required: false
+        default: "daily"
+      scheduled_for:
+        description: "Intended fire time (UTC ISO) from cron-job.org, for lag measurement"
+        required: false
+        default: ""
+
+# A delayed trigger can land on top of a still-running job. Two collectors
+# writing the same snapshot key would contend, so queue rather than cancel:
+# the in-flight run holds data that cannot be re-fetched.
+concurrency:
+  group: collect-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    # A hung HTTP call would otherwise hold a runner slot indefinitely.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Collect
+        run: python -m src.cli collect ${{ inputs.tier || 'daily' }}
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          COINALYZE_API_KEY: ${{ secrets.COINALYZE_API_KEY }}
+          LUNARCRUSH_API_KEY: ${{ secrets.LUNARCRUSH_API_KEY }}
+          CRYPTOPANIC_AUTH_TOKEN: ${{ secrets.CRYPTOPANIC_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      - name: Record trigger lag
+        if: always() && inputs.scheduled_for != ''
+        run: python -m src.ops.record_lag --workflow collect-daily --scheduled "${{ inputs.scheduled_for }}"
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      # Ping ONLY on success. cron-job.org already knows the trigger fired and
+      # got its 204; it cannot know whether the job then failed. That half of
+      # the failure space belongs to healthchecks.io, and pinging on failure
+      # would blind it.
+      - name: Healthcheck ping
+        if: success() && env.HC != ''
+        env:
+          HC: ${{ secrets.HEALTHCHECK_DAILY }}
+        run: curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collect-daily-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 14
+          if-no-files-found: ignore

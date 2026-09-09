@@ -1,0 +1,60 @@
+# =============================================================================
+# WHY: the hourly derivatives tier -- OI and funding time series.
+#
+# This is the data that cannot be reconstructed after the fact. Binance retains
+# only ~30 days of openInterestHist and Coinalyze deletes intraday data daily.
+# An hour not collected is an hour that can never be backtested.
+#
+# workflow_dispatch only. See collect-daily.yml for why there is no schedule.
+# ~24 runs/day sits comfortably inside the Actions Terms of Service, which
+# forbids using Actions as a general compute platform. The 5-minute tier does
+# NOT belong here -- it goes on a host you control (scripts/run_collectors.py).
+# =============================================================================
+name: collect-hourly
+
+on:
+  workflow_dispatch:
+    inputs:
+      scheduled_for:
+        description: "Intended fire time (UTC ISO) from cron-job.org"
+        required: false
+        default: ""
+
+concurrency:
+  group: collect-hourly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Collect hourly tier
+        run: python -m src.cli collect hourly
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      - name: Record trigger lag
+        if: always() && inputs.scheduled_for != ''
+        run: python -m src.ops.record_lag --workflow collect-hourly --scheduled "${{ inputs.scheduled_for }}"
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Healthcheck ping
+        if: success() && env.HC != ''
+        env:
+          HC: ${{ secrets.HEALTHCHECK_HOURLY }}
+        run: curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"

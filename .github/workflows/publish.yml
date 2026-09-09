@@ -1,0 +1,67 @@
+# =============================================================================
+# WHY: bakes the database into data/public/*.json for the static dashboard.
+#
+# This is where the "no secrets in the browser" rule is enforced structurally
+# rather than by discipline: the site is static and reads only these files, so
+# there is no code path by which a key could reach the bundle. If a feature
+# ever needs a key at render time, the fetch moves HERE and the result is baked
+# into JSON.
+#
+# Must be idempotent. A commit on every run, changed or not, would accumulate
+# empty commits forever -- git history is permanent.
+# =============================================================================
+name: publish
+
+on:
+  workflow_run:
+    workflows: ["screen"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Bake JSON
+        run: python -m src.cli publish
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      # Belt and braces before anything becomes public. The repo is public and
+      # a key committed once is a key compromised forever.
+      - name: Refuse to publish anything key-shaped
+        run: |
+          if grep -rIlE '(api[_-]?key|auth[_-]?token|bearer |secret)' data/public/ ; then
+            echo "::error::key-like string found in data/public/ -- refusing to commit"
+            exit 1
+          fi
+          echo "no key-like strings in data/public/"
+
+      - name: Commit if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "data: daily screen ${{ github.run_id }}"
+          file_pattern: "data/public/**"
+          commit_user_name: gem-screener-bot
+          commit_user_email: actions@github.com
+          skip_dirty_check: false

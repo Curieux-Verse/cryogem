@@ -1,0 +1,86 @@
+# =============================================================================
+# WHY: the guard rails. Runs on every push and PR.
+#
+# The `no-schedule-trigger` job is the important one. A stray `on: schedule:`
+# would silently reintroduce 5-45 minute drift AND the 60-day inactivity
+# auto-disable, and it would be invisible because the workflow still appears to
+# run. It is listed in the failure register precisely because it fails quietly.
+# So it is checked mechanically rather than trusted to review.
+# =============================================================================
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-schedule-trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse any scheduled workflow
+        run: |
+          # Match a `schedule:` trigger key, not the word in a comment.
+          if grep -rnE '^[[:space:]]*schedule:' .github/workflows/ ; then
+            echo "::error::an 'on: schedule' trigger exists. All triggering is external (cron-job.org)."
+            echo "It reintroduces 5-45 min drift and the 60-day auto-disable, invisibly."
+            exit 1
+          fi
+          echo "no scheduled triggers -- correct"
+
+      - name: Every workflow must set timeout-minutes
+        run: |
+          missing=0
+          for f in .github/workflows/*.yml; do
+            jobs_n=$(grep -cE '^    runs-on:' "$f" || true)
+            to_n=$(grep -cE '^    timeout-minutes:' "$f" || true)
+            if [ "$jobs_n" -ne "$to_n" ]; then
+              echo "::error file=$f::$jobs_n job(s) but $to_n timeout-minutes"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "every job has a timeout"
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Tests
+        run: python -m pytest -q
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: The news layer must not reach the screening layer
+        # Guardrail: nothing in the Tier-3 news module may influence L1 or L2.
+        # Enforced mechanically because an accidental import is easy to add and
+        # invisible in review.
+        run: python -m pytest tests/test_layer_isolation.py -q
+        env:
+          PYTHONIOENCODING: utf-8
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: No committed secrets
+        run: |
+          if grep -rInE '(github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{32,}|xox[baprs]-)' \
+               --exclude-dir=.git --exclude-dir=node_modules . ; then
+            echo "::error::a credential-shaped string is committed"
+            exit 1
+          fi
+          echo "no committed credentials"
+          if [ -f .env ]; then echo "::error::.env is committed"; exit 1; fi
