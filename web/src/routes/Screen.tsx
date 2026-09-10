@@ -234,10 +234,24 @@ export default function Screen() {
               ))}
             </ul>
 
-            {rows.length === 0 ? (
-              <p className="mt-4 text-sm text-muted">
-                Nothing survived Layer 1 on this run. That is a result rather than a bug,
-                but a survival rate of zero means the thresholds need review.
+            {/* Two different zeroes, and conflating them is the same mistake the
+                rest of the system exists to avoid. universe === 0 means nothing
+                was SCREENED -- no data. survivors === 0 with a real universe
+                means everything was MEASURED and everything failed. The first is
+                a pipeline problem, the second is a threshold problem. */}
+            {data.funnel.universe === 0 ? (
+              <p className="mt-4 max-w-3xl text-sm text-muted">
+                Nothing was screened on this run: the universe is empty. That is a
+                collection problem rather than a screening result — no asset was
+                measured, so no asset passed or failed. Check the Health page for the
+                last successful collector run.
+              </p>
+            ) : rows.length === 0 ? (
+              <p className="mt-4 max-w-3xl text-sm text-muted">
+                {data.funnel.universe} assets were screened and none survived Layer 1.
+                Everything was measured and everything failed, which is a threshold
+                problem rather than a data problem — and the response is a recorded
+                decision, not a loosened number.
               </p>
             ) : null}
             <p className="mt-4 text-xs text-muted">

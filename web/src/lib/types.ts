@@ -203,7 +203,26 @@ export interface Health {
   tables: { table_name: string; row_count: number; last_write_utc: string | null }[];
   coverage: Record<
     string,
-    { assets: number; rows_present: number; of_universe: number | null }
+    {
+      assets: number;
+      rows_present: number;
+      of_universe: number | null;
+      // The snapshot date these counts describe -- the same
+      // latest-at-or-before-today row the screen used. null when the table
+      // holds nothing at all, which is a different state from a stale one.
+      as_of: string | null;
+      age_days: number | null;
+    }
+  >;
+  blocks: Record<
+    string,
+    {
+      weight: number | null;
+      scored: number;
+      of_ranked: number;
+      distinct_values: number;
+      informative: boolean;
+    }
   >;
   news_lag_seconds: { n: number; p50: number | null; p95: number | null };
   trigger_lag_seconds: { n: number; p50: number | null; p95: number | null };

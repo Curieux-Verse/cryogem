@@ -54,6 +54,13 @@ class EventFeatures:
     #: False when we hold no events at all for this asset -- which is a
     #: statement about our data, not about the asset.
     has_event_data: bool
+    #: False when we hold no SUPPLY event for this asset. Narrower than
+    #: has_event_data and the one that matters for unlock scoring: an asset
+    #: with a mainnet date on file but no vesting schedule has event data yet
+    #: nothing to say about its next cliff. Consumers must not read
+    #: days_to_next_major_unlock is None as "no unlock ahead" unless this
+    #: is True -- see the events block in screening/layer2_score.py.
+    has_unlock_record: bool
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +74,7 @@ class EventFeatures:
             "positive_catalyst_30d": self.positive_catalyst_30d,
             "monitoring_tag_active": self.monitoring_tag_active,
             "has_event_data": self.has_event_data,
+            "has_unlock_record": self.has_unlock_record,
         }
 
 
@@ -167,6 +175,7 @@ def compute_features(
         positive_catalyst_30d=positive_catalyst,
         monitoring_tag_active=monitoring_tag_active,
         has_event_data=bool(events),
+        has_unlock_record=has_any_unlock_record,
     )
 
 

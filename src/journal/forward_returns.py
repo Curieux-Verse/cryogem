@@ -143,6 +143,22 @@ def _build_entry(
     )
 
     kind = "control" if is_control else "signal"
+
+    # A control is constructed with an explicit rank 0 / score 0.0 sentinel
+    # by its caller: it was never ranked, and that is the point of it. A
+    # SIGNAL without a score is a different thing entirely -- a defect
+    # upstream -- and coercing it to 0.0 would write a fabricated number into
+    # an append-only table that by design can never be corrected. Refuse.
+    score = ranked.get("total_score")
+    if not is_control and score is None:
+        log.error(
+            "journal_skipped_no_score",
+            run_date=run_date,
+            base_asset=asset,
+            reason="ranked row carried no total_score; refusing to invent one",
+        )
+        return None
+
     return {
         # Deterministic id: re-running a day cannot duplicate an entry, and
         # INSERT OR IGNORE preserves the original row.
@@ -150,7 +166,7 @@ def _build_entry(
         "run_date": run_date,
         "base_asset": asset,
         "rank": int(ranked.get("rank") or 0),
-        "total_score": float(ranked.get("total_score") or 0.0),
+        "total_score": float(score if score is not None else 0.0),
         "price_at_signal": price,
         "btc_price_at_signal": btc_price,
         "is_control": 1 if is_control else 0,

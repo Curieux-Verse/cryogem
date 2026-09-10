@@ -36,7 +36,7 @@ from src.config import get_config
 from src.db.connection import Database, get_db
 from src.db.writes import json_load
 from src.logging_setup import get_logger
-from src.timeutil import add_days, age_hours, today_utc, utc_now_iso
+from src.timeutil import add_days, age_hours, days_between, today_utc, utc_now_iso
 
 log = get_logger("report.daily")
 
@@ -222,7 +222,60 @@ def data_quality(db: Database, run_date: str) -> dict[str, Any]:
         "news_lag_seconds": _percentiles(lags),
         "trigger_lag_seconds": _percentiles(trigger),
         "coverage": _coverage(db, run_date),
+        "blocks": _block_information(db, run_date),
     }
+
+
+#: The six L2 blocks and the weight each carries, for the informativeness read.
+_BLOCK_COLUMNS = (
+    ("fundamental", "score_fundamental"),
+    ("supply", "score_supply"),
+    ("sector", "score_sector"),
+    ("events", "score_events"),
+    ("attention", "score_attention"),
+    ("drawdown", "score_drawdown"),
+)
+
+
+def _block_information(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
+    """Did each L2 block actually SEPARATE today's assets, or just occupy weight?
+
+    Coverage answers "was there a row"; this answers the harder question of
+    whether the block distinguished one asset from another. The two come apart
+    badly and quietly. Today's live run is the example: unlock coverage sits at
+    0.4%, the exchange-announcement endpoint is geo-throttled, and the events
+    block therefore scores an identical 50.0 for all 207 survivors -- a tenth
+    of the total weight contributing a constant.
+
+    A constant changes no ordering, so nothing looks wrong. But the reader
+    believes six things were weighed when five were, and the score's apparent
+    precision is borrowed from a block that said nothing. Reported rather than
+    corrected: renormalising away a zero-variance block would be a threshold
+    change, and those are decisions, not silent adjustments.
+    """
+    weights = get_config().thresholds.layer2_weights.as_dict()
+    rows = db.query(
+        "SELECT " + ", ".join(column for _, column in _BLOCK_COLUMNS)
+        + " FROM layer2_result WHERE run_date = ?",
+        (run_date,),
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for block, column in _BLOCK_COLUMNS:
+        values = [r[column] for r in rows if r[column] is not None]
+        # Rounded before counting: floating noise in the twelfth decimal is
+        # not information, and treating it as such would hide exactly the
+        # case this function exists to catch.
+        distinct = len({round(float(v), 4) for v in values})
+        out[block] = {
+            "weight": weights.get(block),
+            "scored": len(values),
+            "of_ranked": len(rows),
+            "distinct_values": distinct,
+            # One distinct value across every asset separates nobody. Zero
+            # means the block was not scored at all.
+            "informative": distinct > 1,
+        }
+    return out
 
 
 def _percentiles(values: list[float]) -> dict[str, float | None]:
@@ -278,7 +331,34 @@ def _coverage(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
     )
     out: dict[str, dict[str, Any]] = {}
     for table, date_clause, data_clause in tables:
-        bound = f"{run_date}T00:00:00Z" if "ts_utc" in date_clause else run_date
+        # Count against the snapshot the SCREEN actually used, not against
+        # today's calendar date.
+        #
+        # load_snapshots and load_scoring_frame both resolve
+        # MAX(snapshot_date) <= run_date, so a day where collection has not
+        # run yet is screened on yesterday's rows -- deliberately. Coverage
+        # pinned to `= run_date` then reported 0% for every table while the
+        # screen had just ranked 207 assets, which reads as a total collection
+        # outage and is the exact "two different zeroes" confusion the
+        # dashboard already guards against on the funnel.
+        #
+        # So: resolve the same date the screen resolved, report it, and say
+        # how old it is. A reader can then tell "nothing was collected" from
+        # "today's screen ran on yesterday's data", which are different
+        # problems with different responses.
+        if "ts_utc" in date_clause:
+            effective = db.scalar(
+                f"SELECT MAX(ts_utc) FROM {table} WHERE ts_utc <= ?",
+                (f"{run_date}T23:59:59Z",),
+            )
+            as_of = (effective or "")[:10] or None
+            bound = f"{as_of}T00:00:00Z" if as_of else f"{run_date}T00:00:00Z"
+        else:
+            as_of = db.scalar(
+                f"SELECT MAX(snapshot_date) FROM {table} WHERE snapshot_date <= ?",
+                (run_date,),
+            )
+            bound = as_of or run_date
         measured = (
             db.scalar(
                 scoped.format(table=table, date_clause=date_clause, data_clause=data_clause),
@@ -297,6 +377,11 @@ def _coverage(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
             "assets": measured,
             "rows_present": present,
             "of_universe": round(measured / universe, 4) if universe else None,
+            #: The snapshot date these counts describe. None when the table
+            #: has no row at or before run_date at all.
+            "as_of": as_of,
+            #: How stale that snapshot is relative to the run. 0 means today.
+            "age_days": days_between(as_of, run_date) if as_of else None,
         }
     return out
 
@@ -544,13 +629,16 @@ def _quality_section(quality: dict[str, Any]) -> list[str]:
     coverage = quality.get("coverage") or {}
     if coverage:
         lines += [
-            "| Input table | Measured | Rows | Share of universe |",
-            "|---|---:|---:|---:|",
+            "| Input table | Snapshot | Age | Measured | Rows | Share of universe |",
+            "|---|---|---:|---:|---:|---:|",
         ]
         for table, stats in coverage.items():
             share = stats["of_universe"]
+            age = stats.get("age_days")
             lines.append(
-                f"| {table} | {stats['assets']} | {stats['rows_present']} | "
+                f"| {table} | {stats.get('as_of') or '—'} | "
+                f"{'—' if age is None else f'{age}d'} | "
+                f"{stats['assets']} | {stats['rows_present']} | "
                 f"{'—' if share is None else f'{share:.1%}'} |"
             )
         lines.append("")
@@ -558,7 +646,40 @@ def _quality_section(quality: dict[str, Any]) -> list[str]:
             "_\"Measured\" counts assets with an actual value; \"Rows\" counts "
             "rows written. Where the two differ, a row exists with nothing in "
             "it, and the block was scored on far less than the row count "
-            "suggests._",
+            "suggests. \"Snapshot\" is the date these counts describe -- the "
+            "same latest-at-or-before-today row the screen itself used, so a "
+            "non-zero age means today's ranking was built on older data rather "
+            "than that nothing was collected._",
+            "",
+        ]
+
+    blocks = quality.get("blocks") or {}
+    uninformative = [
+        (name, stats) for name, stats in blocks.items() if not stats["informative"]
+    ]
+    if uninformative:
+        dead_weight = sum(stats["weight"] or 0 for _, stats in uninformative)
+        total_weight = sum(stats["weight"] or 0 for stats in blocks.values())
+        lines += [
+            "**Blocks that separated nothing today.** A block scoring the same "
+            "value for every asset changes no ordering, so it raises no error "
+            "-- but the score looks more informed than it is.",
+            "",
+            "| Block | Weight | Scored | Distinct values |",
+            "|---|---:|---:|---:|",
+        ]
+        for name, stats in uninformative:
+            lines.append(
+                f"| {name} | {stats['weight']:g} | {stats['scored']}/"
+                f"{stats['of_ranked']} | {stats['distinct_values']} |"
+            )
+        share = dead_weight / total_weight if total_weight else 0.0
+        lines += [
+            "",
+            f"_{dead_weight:g} of {total_weight:g} weight ({share:.0%}) carried no "
+            "information. The ranking is effectively built from the remaining "
+            "blocks; it is not wrong, but it rests on fewer inputs than the six "
+            "the weights imply._",
             "",
         ]
 

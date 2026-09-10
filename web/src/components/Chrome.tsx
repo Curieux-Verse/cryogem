@@ -10,25 +10,56 @@ const ROUTES = [
   { to: "/health", label: "Health" },
 ];
 
-/** Spec 16.4.6: never display a stale screen as current. The banner states the
- *  data's ACTUAL age rather than just saying "stale", because the age is what
- *  tells the reader whether one collection was missed or the machine is dead. */
+function humanAge(hours: number): string {
+  const days = Math.floor(hours / 24);
+  return days >= 1 ? `${days} day${days === 1 ? "" : "s"}` : `${Math.round(hours)} hours`;
+}
+
+/** Spec 16.4.6: never display a stale screen as current.
+ *
+ *  TWO clocks, and checking only one leaves a gap. `generated_at_utc` is when
+ *  the JSON was written; `run_date` is the day the screen actually ran. A
+ *  manual re-publish of an old screen produces a FRESH publish time over STALE
+ *  data, and a banner keyed on publish time alone would stay silent on exactly
+ *  the case a reader most needs warning about.
+ *
+ *  The banner states the ACTUAL age rather than just saying "stale", because
+ *  the age is what distinguishes one missed collection from a dead machine. */
 function StaleBanner() {
   const latest = useData(getLatest);
   if (latest.state !== "ready") return null;
-  const hours = ageHours(latest.data.generated_at_utc);
-  if (hours <= STALE_AFTER_HOURS) return null;
 
-  const days = Math.floor(hours / 24);
-  const age = days >= 1 ? `${days} day${days === 1 ? "" : "s"}` : `${Math.round(hours)} hours`;
+  const publishedHours = ageHours(latest.data.generated_at_utc);
+  const runHours = ageHours(`${latest.data.run_date}T23:59:59Z`);
+  const publishStale = publishedHours > STALE_AFTER_HOURS;
+  const runStale = runHours > STALE_AFTER_HOURS;
+  if (!publishStale && !runStale) return null;
+
   return (
     <div
       role="alert"
       className="border-b border-fail/40 bg-fail/10 px-4 py-2 text-sm text-fail sm:px-6"
     >
-      <strong className="font-medium">Data is {age} old.</strong>{" "}
-      Published {latest.data.generated_at_utc} for run date {latest.data.run_date}. Nothing
-      below is current, and the screen has not been re-run since.
+      {runStale ? (
+        <>
+          <strong className="font-medium">
+            This screen ran {humanAge(runHours)} ago.
+          </strong>{" "}
+          Run date {latest.data.run_date}
+          {publishStale
+            ? `, published ${humanAge(publishedHours)} ago.`
+            : `, re-published ${humanAge(publishedHours)} ago — the page is new but the data is not.`}{" "}
+          Nothing below is current.
+        </>
+      ) : (
+        <>
+          <strong className="font-medium">
+            Published {humanAge(publishedHours)} ago.
+          </strong>{" "}
+          Run date {latest.data.run_date}. The screen may have run since without the
+          dashboard being updated.
+        </>
+      )}
     </div>
   );
 }
@@ -75,7 +106,17 @@ export default function Chrome() {
           </nav>
         </div>
       </header>
-      <main id="main" key={pathname} className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+      {/* min-h reserves the space the content will occupy. Without it the
+          loading paragraph is a few lines tall, the data arrives, and the
+          footer travels most of a viewport downwards -- measured at CLS 0.97,
+          which is a visible jump on every page load, not a metric quibble.
+          A floor costs nothing when the content is taller and removes the
+          shift entirely when it is not. */}
+      <main
+        id="main"
+        key={pathname}
+        className="mx-auto min-h-[70vh] max-w-7xl px-4 py-8 sm:px-6"
+      >
         <Outlet />
       </main>
       <footer className="border-t border-line px-4 py-6 text-xs text-muted sm:px-6">

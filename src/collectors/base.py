@@ -50,7 +50,7 @@ from tenacity import (
 from src.config import get_config
 from src.db.connection import get_db
 from src.db.writes import record_collector_run
-from src.logging_setup import get_logger
+from src.logging_setup import get_logger, scrub_secrets
 from src.timeutil import utc_now, utc_now_iso
 
 # HTTP statuses worth retrying: rate limits, IP bans, and server-side faults.
@@ -82,13 +82,38 @@ class CollectorRunResult:
         return f"{self.collector}: {self.status}, {self.rows_written} rows{note}"
 
 
+def redact_url(url: str) -> str:
+    """A URL with its query string removed.
+
+    Some APIs take credentials as a query parameter (CryptoPanic requires it),
+    so a full URL is a potential credential. httpx puts the full URL into
+    `str(exc)` for its own errors, and any `error=str(exc)` log field then
+    carries the token into the JSON log -- which is uploaded as a CI artifact
+    on a PUBLIC repository.
+
+    Redacting at the point the URL enters an exception protects every collector
+    at once, rather than relying on each one to remember.
+    """
+    return url.split("?", 1)[0] if url else url
+
+
+class PermanentHTTPError(Exception):
+    """A 4xx that will not improve on retry. Message carries no query string."""
+
+    def __init__(self, status_code: int, url: str) -> None:
+        super().__init__(f"HTTP {status_code} from {redact_url(url)}")
+        self.status_code = status_code
+        self.url = redact_url(url)
+
+
 class RetryableHTTPError(Exception):
     """A transient HTTP failure. Distinct from a permanent one on purpose."""
 
     def __init__(self, status_code: int, url: str, body: str = "") -> None:
-        super().__init__(f"HTTP {status_code} from {url}: {body[:200]}")
+        # The path only. See redact_url: a query string can BE the credential.
+        super().__init__(f"HTTP {status_code} from {redact_url(url)}: {body[:200]}")
         self.status_code = status_code
-        self.url = url
+        self.url = redact_url(url)
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -182,7 +207,12 @@ class BaseCollector(ABC):
                 response = await client.request(method, url, **kwargs)
                 if response.status_code in RETRYABLE_STATUS:
                     raise RetryableHTTPError(response.status_code, str(response.url), response.text)
-                response.raise_for_status()
+                if response.is_error:
+                    # NOT raise_for_status(): httpx builds its message from the
+                    # full request URL, query string included, and a credential
+                    # passed as a query parameter would ride that message into
+                    # any `error=str(exc)` log field. Raise our own instead.
+                    raise PermanentHTTPError(response.status_code, str(response.url))
                 return response.json()
         raise RuntimeError("unreachable: AsyncRetrying exhausted without raising")
 
@@ -239,11 +269,21 @@ class BaseCollector(ABC):
                 rows_written=rows_written,
                 warnings=len(self._warnings),
             )
-        except Exception as exc:  # noqa: BLE001 - we re-raise after recording
-            error_message = f"{type(exc).__name__}: {exc}"
-            # Log at ERROR and record the failed run BEFORE re-raising. A
-            # collector that dies without leaving a row is indistinguishable
-            # from one that never ran.
+        # Deliberately swallowed, and NOT re-raised. One collector failing must
+        # not take down the rest of its tier: the tier runner reads
+        # CollectorRunResult.status, and a `failed` result is data the health
+        # page and the alerting both depend on. Re-raising here would turn a
+        # single dead endpoint into a total collection outage.
+        except Exception as exc:  # noqa: BLE001 - see comment above
+            # Scrubbed before it is recorded, not just before it is logged.
+            # This string is persisted to collector_run and republished in
+            # data/public/health.json, so an httpx error built from a URL with
+            # a token in the query string would otherwise land on a public
+            # page having never passed through the log redactor.
+            error_message = scrub_secrets(f"{type(exc).__name__}: {exc}")
+            # Record the failed run before returning. A collector that dies
+            # without leaving a row is indistinguishable from one that never
+            # ran at all.
             log.error("collector_failed", error=error_message, exc_info=True)
         finally:
             ended = utc_now_iso()
@@ -276,6 +316,8 @@ class BaseCollector(ABC):
 
 
 __all__ = [
+    "PermanentHTTPError",
+    "redact_url",
     "RETRYABLE_STATUS",
     "BaseCollector",
     "CollectorRunResult",

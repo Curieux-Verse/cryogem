@@ -48,8 +48,9 @@ jobs:
 
       - name: Record trigger lag
         if: always() && inputs.scheduled_for != ''
-        run: python -m src.ops.record_lag --workflow collect-hourly --scheduled "${{ inputs.scheduled_for }}"
+        run: python -m src.ops.record_lag --workflow collect-hourly --scheduled "$SCHEDULED_FOR"
         env:
+          SCHEDULED_FOR: ${{ inputs.scheduled_for }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 

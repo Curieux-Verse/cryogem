@@ -1,4 +1,4 @@
-import { Section, TableWrap } from "../components/Bits";
+import { Flag, Section, TableWrap } from "../components/Bits";
 import { Gate } from "../components/States";
 import { STALE_AFTER_HOURS, ageHours, getHealth } from "../lib/data";
 import { DASH, compactInt, num, pct } from "../lib/format";
@@ -91,7 +91,7 @@ export default function Health() {
 
           <Section
             title="Input coverage"
-            note="A ROW is not a MEASUREMENT. Some collectors write a row per asset with nothing in it, so `measured` counts assets carrying an actual value and `rows` counts rows written. Where the two differ, the block was scored on far less than the row count suggests."
+            note="A ROW is not a MEASUREMENT. Some collectors write a row per asset with nothing in it, so `measured` counts assets carrying an actual value and `rows` counts rows written. Where the two differ, the block was scored on far less than the row count suggests. `snapshot` is the date the counts describe — the same latest-at-or-before-today row the screen itself used, so an age above zero means today's ranking was built on older data, not that nothing was collected."
           >
             <TableWrap>
               <table className="w-full min-w-[32rem] border-collapse text-sm">
@@ -101,6 +101,8 @@ export default function Health() {
                 <thead>
                   <tr className="border-b border-line text-left">
                     <th scope="col" className="py-2 pr-3">Table</th>
+                    <th scope="col" className="py-2 pr-3">Snapshot</th>
+                    <th scope="col" className="py-2 pr-3 text-right">Age</th>
                     <th scope="col" className="py-2 pr-3 text-right">Measured</th>
                     <th scope="col" className="py-2 pr-3 text-right">Rows</th>
                     <th scope="col" className="py-2 text-right">Share of universe</th>
@@ -110,6 +112,16 @@ export default function Health() {
                   {Object.entries(data.coverage).map(([table, stats]) => (
                     <tr key={table} className="border-b border-line/40">
                       <td className="py-2 pr-3 font-mono text-xs">{table}</td>
+                      <td className="py-2 pr-3 font-mono text-xs text-muted">
+                        {stats.as_of ?? DASH}
+                      </td>
+                      <td
+                        className={`num py-2 pr-3 ${
+                          (stats.age_days ?? 0) > 1 ? "text-fail" : "text-muted"
+                        }`}
+                      >
+                        {stats.age_days === null ? DASH : `${stats.age_days}d`}
+                      </td>
                       <td className="num py-2 pr-3">{compactInt(stats.assets)}</td>
                       <td className="num py-2 pr-3 text-muted">
                         {compactInt(stats.rows_present)}
@@ -126,6 +138,61 @@ export default function Health() {
                 </tbody>
               </table>
             </TableWrap>
+          </Section>
+
+          {/* Coverage answers "was there a row". This answers whether the
+              block separated one asset from another -- which is the question
+              a reader of the score actually needs answered. A block scoring
+              the same value for all 207 survivors changes no ordering and so
+              raises no error anywhere, while the total still looks like six
+              things were weighed. */}
+          <Section
+            title="Did each block separate anything?"
+            note="A Layer 2 block that scores every asset identically occupies its weight without contributing information. Nothing is wrong with the ranking — it simply rests on fewer inputs than the weights imply. Reported, never silently renormalised away: changing a weight is a recorded decision."
+          >
+            <TableWrap>
+              <table className="w-full min-w-[34rem] border-collapse text-sm">
+                <caption className="sr-only">
+                  Layer 2 blocks, their weight, and how many distinct values each produced
+                </caption>
+                <thead>
+                  <tr className="border-b border-line text-left">
+                    <th scope="col" className="py-2 pr-3">Block</th>
+                    <th scope="col" className="py-2 pr-3 text-right">Weight</th>
+                    <th scope="col" className="py-2 pr-3 text-right">Scored</th>
+                    <th scope="col" className="py-2 pr-3 text-right">Distinct</th>
+                    <th scope="col" className="py-2">Separated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(data.blocks ?? {}).map(([block, stats]) => (
+                    <tr key={block} className="border-b border-line/40">
+                      <td className="py-2 pr-3 font-mono text-xs">{block}</td>
+                      <td className="num py-2 pr-3 text-muted">{stats.weight ?? DASH}</td>
+                      <td className="num py-2 pr-3">
+                        {compactInt(stats.scored)}/{compactInt(stats.of_ranked)}
+                      </td>
+                      <td className="num py-2 pr-3">{compactInt(stats.distinct_values)}</td>
+                      <td className="py-2">
+                        <Flag tone={stats.informative ? "pass" : "fail"}>
+                          {stats.informative
+                            ? "yes"
+                            : stats.distinct_values === 0
+                              ? "not scored"
+                              : "one value for all"}
+                        </Flag>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+            {Object.keys(data.blocks ?? {}).length === 0 ? (
+              <p className="mt-3 text-sm text-muted">
+                No ranking has been published yet, so there are no block scores to
+                describe.
+              </p>
+            ) : null}
           </Section>
 
           <Section

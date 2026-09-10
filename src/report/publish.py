@@ -521,6 +521,9 @@ def build_health(db: Database, run_date: str, quality: dict[str, Any]) -> dict[s
         "recent_failures": recent_failures,
         "tables": quality["tables"],
         "coverage": quality["coverage"],
+        # Coverage says a row existed. This says whether the block separated
+        # one asset from another -- see daily._block_information.
+        "blocks": quality.get("blocks", {}),
         "news_lag_seconds": quality["news_lag_seconds"],
         "trigger_lag_seconds": quality["trigger_lag_seconds"],
         "trigger_lag_recent": lag,

@@ -189,8 +189,30 @@ class Layer2Scorer:
             # sector's name.
             usable = by_sector[by_sector["count"] >= self.sectors.min_members_for_index]["mean"]
 
+            # "Relative strength" means relative to the BENCHMARK. With the
+            # benchmark missing, the earlier code quietly substituted the
+            # cross-sectional mean, which measures something else entirely --
+            # a sector's strength against the screened universe, not against
+            # BTC -- while still labelling the metric sector_rs. Every sector
+            # then scores relative to a pool that BTC is not even in, and on a
+            # day when BTC's own return failed to load, the whole block
+            # silently changes its meaning.
+            #
+            # A missing benchmark now yields NaN for the whole window: the
+            # metric scores None, the block renormalises across whatever else
+            # was measured, and nothing pretends to be a BTC comparison that
+            # is not one.
             benchmark = returns.get(self.sectors.benchmark_asset, np.nan)
-            relative = usable - (benchmark if pd.notna(benchmark) else usable.mean())
+            if pd.isna(benchmark):
+                log.warning(
+                    "sector_rs_no_benchmark",
+                    window=window,
+                    benchmark=self.sectors.benchmark_asset,
+                    effect="sector RS scored None for this window, weight redistributed",
+                )
+                relative = pd.Series(np.nan, index=usable.index, dtype=float)
+            else:
+                relative = usable - benchmark
             mapped = pd.Series(sector_of, index=df.index).map(relative)
             # 'unclassified' is not a sector: score it None, never the mean.
             mapped[pd.Series(sector_of, index=df.index) == "unclassified"] = np.nan
@@ -205,13 +227,28 @@ class Layer2Scorer:
         """Distance from the next cliff, and scheduled catalysts. Weight 10."""
         metrics: dict[str, pd.Series] = {}
 
-        # No scheduled unlock at all is the best case, so NaN maps to the top
-        # rather than being dropped -- but only when we HAVE event data for the
-        # asset, which L1 already required.
-        # No scheduled unlock is the BEST case, so a missing value maps to
-        # the top of the range rather than being dropped. Cast first:
-        # fillna on an object column is deprecated and downcasts silently.
-        days = pd.to_numeric(df["days_to_next_major_unlock"], errors="coerce").fillna(9999)
+        # A null days_to_next_major_unlock has TWO meanings and they are
+        # opposites: "we hold a vesting schedule and it has no cliff ahead"
+        # (the best case in the block) and "we hold no unlock record at all"
+        # (we know nothing). The earlier version filled both with 9999, so an
+        # asset we had no supply data for scored the top percentile on unlock
+        # distance -- ignorance rewarded as safety, which is exactly the
+        # failure mode this system exists to avoid.
+        #
+        # The comment that justified it claimed L1 had already required event
+        # data. It has not: L1_UNLOCK returns _unknown() when has_event_data
+        # is false, and an unknown check passes. On the live universe that
+        # branch is the common case, not the exception -- so the assumption
+        # was load-bearing and wrong.
+        #
+        # Now only assets with an actual unlock record get the top-of-range
+        # treatment. The rest stay NaN, score None on this metric, and their
+        # weight redistributes across the metrics that were measured. Cast
+        # first: fillna on an object column downcasts silently.
+        days = pd.to_numeric(df["days_to_next_major_unlock"], errors="coerce")
+        known = df["has_unlock_record"].astype("boolean").fillna(False).astype(bool)
+        days = days.where(~(days.isna() & known), 9999.0)
+        days = days.where(known, np.nan)
         metrics["days_to_next_unlock"] = cross_sectional_percentile(days)
         metrics["overhang_cleared"] = (
             df["unlock_overhang_cleared"].astype("boolean").fillna(False).astype(float) * 100.0
@@ -387,6 +424,12 @@ def load_scoring_frame(db: Database, run_date: str, survivors: list[str]) -> pd.
     df["monitoring_tag_active"] = [
         events[a].monitoring_tag_active if a in events else False for a in df.index
     ]
+    # Whether we hold ANY unlock record, which is what makes a null
+    # days_to_next_major_unlock readable. Without it the events block cannot
+    # tell "nothing scheduled" from "nothing known".
+    df["has_unlock_record"] = [
+        events[a].has_unlock_record if a in events else False for a in df.index
+    ]
 
     df = _attach_returns(db, df, run_date)
 
@@ -435,7 +478,19 @@ def run_layer2(db: Database, run_date: str, survivors: list[str]) -> list[dict[s
     fetched_at = utc_now_iso()
 
     rows: list[dict[str, Any]] = []
+    unscorable: list[str] = []
     for asset, row in scored.iterrows():
+        # An asset with no data in ANY of the six blocks has a NaN total. The
+        # earlier `or 0.0` wrote that as a score of zero, which is a lie in the
+        # one direction the system cannot afford: the row then looks measured
+        # and terrible rather than unmeasured, it occupies a rank, and it
+        # enters the journal as a signal whose forward return gets attributed
+        # to a score that was never computed. Since total_score is NOT NULL,
+        # the honest option is to omit the row and say so out loud.
+        total = _clean(row["total_score"])
+        if total is None:
+            unscorable.append(str(asset))
+            continue
         per_asset = {
             f"{block}.{metric}": _clean(series.get(asset))
             for block, metrics in percentiles.items()
@@ -445,7 +500,7 @@ def run_layer2(db: Database, run_date: str, survivors: list[str]) -> list[dict[s
             {
                 "run_date": run_date,
                 "base_asset": asset,
-                "total_score": _clean(row["total_score"]) or 0.0,
+                "total_score": total,
                 "score_fundamental": _clean(row["fundamental"]),
                 "score_supply": _clean(row["supply"]),
                 "score_sector": _clean(row["sector"]),
@@ -459,8 +514,24 @@ def run_layer2(db: Database, run_date: str, survivors: list[str]) -> list[dict[s
             }
         )
 
+    if unscorable:
+        # Loud, not fatal: these assets survived L1, so they are worth a look,
+        # but nothing about them was measurable today.
+        log.warning(
+            "layer2_unscorable_assets",
+            run_date=run_date,
+            count=len(unscorable),
+            assets=sorted(unscorable)[:20],
+            effect="omitted from the ranking rather than scored zero",
+        )
+
     upsert(db, "layer2_result", rows)
-    log.info("layer2_complete", survivors=len(survivors), ranked=len(rows))
+    log.info(
+        "layer2_complete",
+        survivors=len(survivors),
+        ranked=len(rows),
+        unscorable=len(unscorable),
+    )
     return rows
 
 

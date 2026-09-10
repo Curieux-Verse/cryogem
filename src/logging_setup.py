@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+import re
 from typing import Any
 
 import structlog
@@ -34,12 +35,63 @@ _REDACTED = "***redacted***"
 _configured = False
 
 
+#: Credential SHAPES, for fields whose NAME gives nothing away.
+#:
+#: Name-based redaction alone is not enough, and a security review found the
+#: gap: the CryptoPanic collector logged `error=str(exc)` on failure, and httpx
+#: builds its exception message from the full request URL -- query string
+#: included. CryptoPanic takes its token as a query parameter, so the token
+#: rode a field called "error" straight past a redactor that only inspects
+#: field names, into a JSON log that CI uploads as an artifact from a PUBLIC
+#: repository.
+#:
+#: The URL is now redacted where it enters the exception (see
+#: src/collectors/base.py redact_url), which fixes that specific path. This is
+#: the second, independent layer: it does not care which field the value is in
+#: or what the field is called.
+_SECRET_VALUE_PATTERNS = (
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),
+    re.compile(r"hc-ping\.com/[0-9a-f-]{36}"),
+    re.compile(r'auth_?[Tt]oken=[^&\s"]+'),
+    re.compile(r'api_?[Kk]ey=[^&\s"]+'),
+    re.compile(r"\bbot\d{8,}:[A-Za-z0-9_-]{30,}"),
+    re.compile(r'libsql://[^\s"]*\?[^\s"]*', re.I),
+)
+
+
+def scrub_secrets(value: str) -> str:
+    """Blank any credential-shaped substring. Public: logs are not the only sink.
+
+    A collector's error_message is recorded in collector_run and then
+    republished in data/public/health.json, so an exception carrying a token
+    would reach a public web page without ever passing through a log line.
+    Callers that persist free-form error text run it through here.
+    """
+    for pattern in _SECRET_VALUE_PATTERNS:
+        value = pattern.sub(_REDACTED, value)
+    return value
+
+
+#: Kept as the private name the log processor was written against.
+_scrub_value = scrub_secrets
+
+
 def _redact_secrets(_logger: Any, _method: str, event_dict: dict) -> dict:
-    """Blank any field whose name suggests a credential."""
+    """Blank credentials, by field name AND by value shape.
+
+    Two independent passes, because either alone has a blind spot. A field
+    called `auth_token` is caught by name whatever it holds; a token embedded
+    in a field called `error` is caught only by shape.
+    """
     for field in list(event_dict):
         lowered = field.lower()
         if any(hint in lowered for hint in _SECRET_HINTS):
             event_dict[field] = _REDACTED
+            continue
+        value = event_dict[field]
+        if isinstance(value, str) and value:
+            event_dict[field] = _scrub_value(value)
     return event_dict
 
 
@@ -121,4 +173,4 @@ def get_logger(name: str) -> Any:
     return structlog.get_logger(name)
 
 
-__all__ = ["configure_logging", "get_logger"]
+__all__ = ["configure_logging", "get_logger", "scrub_secrets"]

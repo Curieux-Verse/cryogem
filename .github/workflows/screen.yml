@@ -52,9 +52,19 @@ jobs:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 
+      # RUN_DATE arrives as environment data rather than being interpolated
+      # into the script, so a crafted input cannot append a second command.
+      # The empty case stays a genuinely absent flag rather than an empty
+      # --date, which the CLI would reject.
       - name: Run L1 + L2
-        run: python -m src.cli screen ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
+        run: |
+          if [ -n "$RUN_DATE" ]; then
+            python -m src.cli screen --date "$RUN_DATE"
+          else
+            python -m src.cli screen
+          fi
         env:
+          RUN_DATE: ${{ inputs.date }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           PYTHONIOENCODING: utf-8

