@@ -49,3 +49,11 @@ web/.vite/
 Thumbs.db
 .idea/
 .vscode/
+
+# Credential dumps. A token pasted into a scratch file is one `git add -A`
+# away from a public commit, and this repo is public.
+turso_key.txt
+*_key.txt
+*_token.txt
+*.key
+secrets.json

@@ -72,6 +72,46 @@ def _split_sql_statements(sql: str) -> list[str]:
     return [s for s in statements if s]
 
 
+class TursoStatementError(RuntimeError):
+    """A statement Turso rejected, with the SQL attached.
+
+    libsql-client reads `response["result"]` unconditionally (http.py:64), so
+    when the server answers with an error instead it raises a bare
+    `KeyError('result')` and DISCARDS the server's message. A collector failing
+    at 3am would surface as `KeyError: 'result'` and nothing else.
+
+    Verified on 2026-09-10: deleting from journal_entry on Turso raises exactly
+    that KeyError, and the row survives -- so the append-only triggers ARE
+    enforced, and the opaque error is purely a client-library defect. This
+    wrapper restores the one diagnostic the library drops: which statement
+    failed. Parameters are deliberately NOT included; they are market data
+    here, but a rule of "never log the values" is easier to keep than a rule
+    with exceptions.
+    """
+
+    def __init__(self, sql: str) -> None:
+        super().__init__(
+            "Turso rejected this statement. libsql-client discards the server's "
+            "error text (it reads response['result'] and raises KeyError when the "
+            "server returned an error instead), so the cause is not recoverable "
+            "from the exception. The usual causes are a constraint, a trigger "
+            "(journal_entry and forward_return are append-only by design), or a "
+            "schema mismatch. "
+            f"  statement: {sql.strip()[:400]}"
+        )
+        self.sql = sql
+
+
+def _libsql_call(sql: str, fn: Any) -> Any:
+    """Run a libsql call, turning its opaque KeyError into a usable error."""
+    try:
+        return fn()
+    except KeyError as exc:
+        if exc.args and exc.args[0] == "result":
+            raise TursoStatementError(sql) from exc
+        raise
+
+
 class Database:
     """A thin, uniform wrapper over sqlite3 or libsql.
 
@@ -90,7 +130,7 @@ class Database:
             cur = self._conn.execute(sql, tuple(params))
             cols = [d[0] for d in cur.description] if cur.description else []
             return [dict(zip(cols, row)) for row in cur.fetchall()]
-        rs = self._conn.execute(sql, list(params))
+        rs = _libsql_call(sql, lambda: self._conn.execute(sql, list(params)))
         cols = list(rs.columns)
         return [dict(zip(cols, list(row))) for row in rs.rows]
 
@@ -109,7 +149,7 @@ class Database:
         if self.backend == "sqlite":
             cur = self._conn.execute(sql, tuple(params))
             return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
-        rs = self._conn.execute(sql, list(params))
+        rs = _libsql_call(sql, lambda: self._conn.execute(sql, list(params)))
         return int(getattr(rs, "rows_affected", 0) or 0)
 
     def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> int:
@@ -124,7 +164,7 @@ class Database:
         if self.backend == "sqlite":
             self._conn.executemany(sql, materialised)
             return len(materialised)
-        self._conn.batch([(sql, list(r)) for r in materialised])
+        _libsql_call(sql, lambda: self._conn.batch([(sql, list(r)) for r in materialised]))
         return len(materialised)
 
     def commit(self) -> None:

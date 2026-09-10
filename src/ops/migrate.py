@@ -71,14 +71,29 @@ def _open_local() -> Database:
     return connection_module._open_sqlite()
 
 
+def _turso_url() -> str | None:
+    """The Turso URL from wherever the rest of the app reads it.
+
+    MUST match connection.open_database(): config first (which is what loads
+    .env via pydantic-settings), then the raw environment. Reading only
+    os.getenv made this tool disagree with `init-db` -- init-db connected to
+    Turso while the migration insisted no URL was set.
+    """
+    from src.config import get_config
+
+    return get_config().secrets.turso_database_url or os.getenv("TURSO_DATABASE_URL")
+
+
 def _open_turso() -> Database:
-    url = os.getenv("TURSO_DATABASE_URL")
-    token = os.getenv("TURSO_AUTH_TOKEN")
+    from src.config import get_config
+
+    url = _turso_url()
     if not url:
         raise RuntimeError(
             "TURSO_DATABASE_URL is not set. Put it in .env or export it before "
             "running this, or there is nothing to migrate to."
         )
+    token = get_config().secrets.turso_auth_token or os.getenv("TURSO_AUTH_TOKEN")
     return connection_module._open_libsql(url, token)
 
 
@@ -112,7 +127,7 @@ def migrate(dry_run: bool = False) -> list[dict[str, Any]]:
     source = _open_local()
     # A dry run must work BEFORE the Turso account exists -- its whole purpose
     # is to show what is at stake so the decision can be made informed.
-    target = None if dry_run and not os.getenv("TURSO_DATABASE_URL") else _open_turso()
+    target = None if dry_run and not _turso_url() else _open_turso()
     if target is None:
         try:
             results = [copy_table(source, source, t, dry_run=True) for t in TABLE_ORDER]
@@ -146,25 +161,54 @@ def migrate(dry_run: bool = False) -> list[dict[str, Any]]:
 def verify(target: Database | None = None) -> dict[str, Any]:
     """Confirm Turso enforces the append-only triggers.
 
-    This is research question R9: the schema relies on SQLite triggers to make
-    journal_entry append-only, and the guarantee is worth nothing if libSQL
-    silently ignored them. Checked by ATTEMPTING a delete and requiring it to
-    fail.
+    Research question R9: the schema makes journal_entry append-only with
+    SQLite triggers, and that guarantee is worth nothing if libSQL quietly
+    ignored them.
+
+    The probe is a removal attempt, and THE PASS CONDITION IS THE ROW COUNT,
+    not the exception. That distinction is load-bearing: libsql-client throws
+    away the server's error text and raises a bare KeyError('result'), so a
+    check that matched on the error message reported "not enforced" against a
+    database that was enforcing it perfectly. Counting rows is ground truth;
+    the exception is noise the client invented.
     """
     owned = target is None
     db = target or _open_turso()
     try:
         counts = {t: db.scalar(f"SELECT COUNT(*) FROM {t}") for t in TABLE_ORDER}
-        enforced = False
-        detail = "journal_entry is empty, so the trigger could not be exercised"
-        if counts.get("journal_entry"):
-            try:
-                db.execute("DELETE FROM journal_entry WHERE 1=0 OR rowid IN (SELECT rowid FROM journal_entry LIMIT 1)")
-                detail = "DELETE SUCCEEDED -- the append-only trigger is NOT enforced on Turso"
-            except Exception as exc:  # noqa: BLE001 - the failure IS the pass
-                enforced = "append-only" in str(exc).lower()
-                detail = str(exc)[:200]
-        return {"counts": counts, "append_only_enforced": enforced, "detail": detail}
+
+        before = counts.get("journal_entry") or 0
+        if not before:
+            return {
+                "counts": counts,
+                "append_only_enforced": None,
+                "detail": "journal_entry is empty, so the trigger could not be exercised",
+            }
+
+        raised: str | None = None
+        try:
+            db.execute(
+                "DELETE FROM journal_entry WHERE entry_id = "
+                "(SELECT entry_id FROM journal_entry LIMIT 1)"
+            )
+        except Exception as exc:  # noqa: BLE001 - a rejection is the pass case
+            raised = type(exc).__name__
+
+        after = db.scalar("SELECT COUNT(*) FROM journal_entry") or 0
+        enforced = after == before
+        return {
+            "counts": counts,
+            "append_only_enforced": enforced,
+            "detail": (
+                f"removal attempted on journal_entry: {before} rows before, {after} after"
+                + (f"; client raised {raised}" if raised else "; no exception raised")
+                + (
+                    ". The row survived, so the trigger IS enforced."
+                    if enforced
+                    else ". THE ROW WAS REMOVED -- append-only is NOT enforced."
+                )
+            ),
+        }
     finally:
         if owned:
             db.close()

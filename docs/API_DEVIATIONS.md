@@ -120,3 +120,30 @@ Confirm each on the first real collection and record the answer above.
   product-addition titles while exempting genuine
   "USD-Margined ... Perpetual Contract" launches, which the word "margin" would
   otherwise catch.
+
+---
+
+## 2026-09-10 — libsql-client discards the server's error message
+
+**Observed:** any statement Turso rejects surfaces in Python as a bare
+`KeyError('result')`. No SQL, no server message, no constraint name.
+
+**Cause:** `libsql_client/http.py:64` reads `response["result"]`
+unconditionally. When the server answers with an `error` key instead, the
+lookup raises `KeyError` and the error payload is thrown away.
+
+**Why it matters here:** the whole point of the JSON logs is that an unattended
+3am failure is diagnosable afterwards. `KeyError: 'result'` in a collector log
+identifies neither the table nor the constraint, and this is the production
+backend.
+
+**What the code does now:** `src/db/connection.py` wraps every libSQL call and
+converts that specific `KeyError` into `TursoStatementError`, which carries the
+failing SQL text. Parameters are deliberately excluded — they are market data
+here, but "never log the values" is an easier rule to keep than one with
+exceptions.
+
+**Also corrected:** `src/ops/migrate.py --verify` no longer infers enforcement
+from the error message, because there is no message to read. It compares row
+counts before and after.
+

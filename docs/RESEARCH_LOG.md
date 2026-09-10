@@ -82,3 +82,44 @@ not silent adjustment. Record the reasoning in DECISIONS.md.
 After 30 days of scores. Any pair with |rho| > 0.8 is measuring one thing twice.
 
 - measured on: `____` · highest pair: `____`
+
+---
+
+## R8 — Turso free-tier allowances  ·  ANSWERED 2026-09-10
+
+Read from the vendor page rather than third-party summaries, which disagree:
+
+| | Free tier |
+|---|---:|
+| Databases | 100 |
+| Storage | 5 GB |
+| Rows read / month | 500,000,000 |
+| Rows written / month | 10,000,000 |
+
+Source: turso.tech/pricing and docs.turso.tech/help/usage-and-billing.
+
+Sizing against the real database after cutover: 362,818 rows total, dominated
+by 357,121 daily price bars. Storage is a non-issue. **Row READS are the
+metered resource that matters**, which is why every query pattern is indexed
+and why table_stats maintains counts incrementally instead of running
+`SELECT COUNT(*)` over the time-series tables.
+
+## R9 — does libSQL honour the schema, including the append-only triggers?  ·  ANSWERED 2026-09-10
+
+**Yes, fully.** `init-db` against Turso executed 52 statements and created all
+23 tables. The append-only guarantee was then tested against the real database
+rather than assumed:
+
+    removal attempted on journal_entry: 50 rows before, 50 after.
+    The row survived, so the trigger IS enforced.
+
+**The finding that nearly caused a false negative.** The first version of this
+check matched on the exception message and reported `append_only_enforced:
+False` — on a database that was enforcing it correctly. libsql-client discards
+the server's error text (see the API_DEVIATIONS entry), so there was no message
+to match. The check now uses the row count, which is ground truth.
+
+The general lesson: when verifying that something is *prevented*, assert on the
+observable state, not on the error you expected to see. The error is the
+library's account of what happened; the row count is what happened.
+
