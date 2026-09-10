@@ -783,3 +783,55 @@ all measure 100.
 `/favicon.ico`. Harmless, but it is noise in exactly the console a reader would
 check first when something looks wrong. Now an inline SVG data URI — no extra
 request, no committed binary.
+
+---
+
+## D-031 — the trigger-lag input is a time of DAY, not an instant
+
+**Date:** 2026-09-10 · **Status:** accepted
+
+`record_lag` originally expected `scheduled_for` to be a full UTC ISO instant,
+as the runbook's example JSON showed. cron-job.org cannot send that. Its
+request body is a fixed string with no templating and no variables, so the
+instant would have been correct on the day it was pasted and then wrong by one
+more day every day. Within a week the Health page would have been plotting a
+lag of ~600,000 seconds and calling it a measurement.
+
+The input is now the intended fire **slot**, which for a fixed cron entry
+genuinely is constant: `"03:10"` for a daily job, `":25"` for an hourly one.
+`resolve_scheduled` walks that slot back to its most recent occurrence at or
+before the actual start. A full ISO instant is still accepted for manual
+dispatch and for tests.
+
+A 120-second skew tolerance absorbs the case where cron-job.org's clock is a
+hair ahead of GitHub's. Without it, firing two seconds "early" would roll the
+candidate back a whole period and record a 24-hour lag — setting off precisely
+the alarm this metric exists to raise, for the one reason that is not a problem.
+
+`journal.yml` had declared the `scheduled_for` input since Phase 10 and never
+used it. An input that silently does nothing is worse than no input: the
+operator configures it, sees a 204, and believes lag is being measured on a job
+where it is not. It now records lag like the two collectors.
+
+---
+
+## D-032 — the dashboard rebuild hangs off `workflow_run`, not the data commit
+
+**Date:** 2026-09-10 · **Status:** accepted
+
+`build-site` triggered on `push` to `data/public/**`. `publish` writes that
+directory and commits it with `GITHUB_TOKEN` — and GitHub deliberately raises
+**no** `push` event for a `GITHUB_TOKEN` commit, to stop a workflow retriggering
+itself forever.
+
+So the chain ended at `publish`. Data would have landed in the repo daily and
+the site would have rebuilt only when a human pushed `web/**`. The failure is
+the bad kind: nothing errors, no alert fires, and the dashboard shows a
+confident, well-formed, increasingly old screen — the exact stale-dashboard
+failure the 26-hour age banner exists to catch, arriving by a route the banner
+does not cover, because the banner is baked into the stale bundle.
+
+`build-site` now also triggers on `workflow_run` after `publish` completes, and
+the build job is guarded on `conclusion == 'success'` so a failed publish never
+deploys. The `push` trigger stays for human pushes, which carry a real actor's
+token and do raise the event.

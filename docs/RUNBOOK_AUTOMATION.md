@@ -106,31 +106,38 @@ enforced in `writes.py` instead. Do not proceed without one or the other.
 
 ## Step 5 — cron-job.org
 
-Sign up (free). Create **one job per workflow**, all the same shape:
+Sign up (free). Create **one job per externally-triggered workflow**, all the same shape:
 
 ```
 Method    POST
-URL       https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/{FILE}/dispatches
+URL       https://api.github.com/repos/Curieux-Verse/cryogem/actions/workflows/{FILE}/dispatches
 Headers   Accept: application/vnd.github+json
           Authorization: Bearer github_pat_xxxxxxxx
           X-GitHub-Api-Version: 2022-11-28
           Content-Type: application/json
-Body      {"ref":"main"}
 Notify    ON FAILURE  <- enable for every job
 ```
 
-| Job | Schedule (UTC) | Workflow file |
-|---|---|---|
-| collect-daily | `10 3 * * *` | `collect-daily.yml` |
-| collect-hourly | `25 * * * *` | `collect-hourly.yml` |
-| journal | `10 4 * * *` | `journal.yml` |
-| backup | `0 5 * * 0` | `backup.yml` |
+**Only four jobs.** `screen`, `publish` and `build-site` are not triggered from
+outside: `screen` chains off `collect-daily` via `workflow_run`, `publish` off
+`screen`, and `build-site` off `publish`. Each link is guarded on the previous
+job's success, so a failed collection never produces a screen and a failed
+screen is never published.
 
-To get the trigger-lag metric on the Health page, send the intended time too:
+| Job | Schedule (UTC) | Workflow file | Body |
+|---|---|---|---|
+| collect-daily | `10 3 * * *` | `collect-daily.yml` | `{"ref":"main","inputs":{"scheduled_for":"03:10"}}` |
+| collect-hourly | `25 * * * *` | `collect-hourly.yml` | `{"ref":"main","inputs":{"scheduled_for":":25"}}` |
+| journal | `10 4 * * *` | `journal.yml` | `{"ref":"main","inputs":{"scheduled_for":"04:10"}}` |
+| backup | `0 5 * * 0` | `backup.yml` | `{"ref":"main"}` |
 
-```json
-{"ref":"main","inputs":{"scheduled_for":"2026-09-09T03:10:00Z"}}
-```
+`scheduled_for` is what makes the trigger-lag panel on the Health page work,
+and that panel is how a stray `on: schedule` is caught after it is merged.
+
+**It is the cron SLOT, not a timestamp.** cron-job.org's body is a fixed string
+with no templating, so a pasted ISO instant would be right on the day you paste
+it and one day more wrong every day after. `"03:10"` means "the most recent
+03:10 UTC"; `":25"` means "the most recent :25 past the hour". See D-031.
 
 **Test each one with "Execute now" before trusting the schedule.**
 
@@ -160,9 +167,25 @@ space, and having only one leaves a blind spot big enough to lose weeks in:
 | Workflow queued, then the job failed | **no** — it already got its 204 | **yes** |
 | Job hung until `timeout-minutes` | no | **yes** |
 
-Create one check per workflow. **Set the daily check's period to 25 hours**, so
-runner-provisioning drift does not cry wolf while a real one-day gap still
-alerts.
+Create one check per pinging workflow — `collect-daily`, `collect-hourly`,
+`journal` and `screen`. `screen` is on the list even though nothing triggers it
+directly: it is the job that turns collected data into a published run, so it
+is exactly where a silent chain break would show up.
+
+| Check | Secret | Period | Grace |
+|---|---|---|---|
+| collect-daily | `HEALTHCHECK_DAILY` | **25 hours** | 1 hour |
+| collect-hourly | `HEALTHCHECK_HOURLY` | 90 minutes | 30 minutes |
+| journal | `HEALTHCHECK_JOURNAL` | **25 hours** | 1 hour |
+| screen | `HEALTHCHECK_SCREEN` | **25 hours** | 1 hour |
+
+**The daily periods are 25 hours, not 24**, so runner-provisioning drift does
+not cry wolf while a real one-day gap still alerts.
+
+Every workflow pings **only on success** (`if: success()`). Pinging on failure
+would tell healthchecks.io the job ran, which is the one thing cron-job.org
+already knows — and would blind the only monitor that can see a job that
+started and then died.
 
 ---
 

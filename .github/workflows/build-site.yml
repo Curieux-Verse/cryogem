@@ -10,6 +10,16 @@
 name: build-site
 
 on:
+  # `publish` commits data/public/** using GITHUB_TOKEN, and GitHub deliberately
+  # raises NO `push` event for a GITHUB_TOKEN commit -- otherwise a workflow
+  # could retrigger itself forever. Without this workflow_run the daily data
+  # lands in the repo and the site never rebuilds: the dashboard would sit on
+  # whatever `web/**` a human last pushed, looking fine and being days stale.
+  # The `push` trigger below still covers human pushes, which carry a real
+  # actor's token.
+  workflow_run:
+    workflows: ["publish"]
+    types: [completed]
   push:
     paths:
       - "data/public/**"
@@ -28,6 +38,11 @@ permissions:
 
 jobs:
   build:
+    # Never deploy on the back of a failed publish. `deploy` needs `build`, so
+    # skipping here skips the deployment too.
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

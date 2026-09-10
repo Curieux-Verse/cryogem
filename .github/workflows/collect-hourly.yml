@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       scheduled_for:
-        description: "Intended fire time (UTC ISO) from cron-job.org"
+        description: "Intended fire slot from cron-job.org: \"HH:MM\" daily, \":MM\" hourly, or a UTC ISO instant"
         required: false
         default: ""
 
