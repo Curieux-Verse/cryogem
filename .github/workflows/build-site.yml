@@ -44,10 +44,18 @@ jobs:
       - run: npm run build
         working-directory: web
 
+      # Match key SHAPES, not key WORDS -- the same patterns
+      # src/report/publish.py applies before it writes anything.
+      #
+      # Spec 16.4 states the criterion as `grep -ri "api_key|secret|token"`,
+      # which CANNOT pass on any React application: React ships an export
+      # literally named __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED, and
+      # our own event payload has a field called magnitude_tokens. A gate that
+      # always fails is a gate someone disables. See docs/DECISIONS.md D-020.
       - name: Scan the built bundle for secrets
         run: |
-          if grep -rIlE '(api[_-]?key["'"'"']?\s*[:=]|auth[_-]?token|github_pat_|hc-ping\.com/[0-9a-f-]{36})' web/dist/ ; then
-            echo "::error::key-like string found in web/dist/ -- refusing to deploy"
+          if grep -rIlE 'github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|hc-ping\.com/[0-9a-f-]{36}|authToken=|bot[0-9]{8,}:[A-Za-z0-9_-]{30,}|(api[_-]?key|auth[_-]?token|bot_token)"?[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9_-]{16,}' web/dist/ ; then
+            echo "::error::key-shaped string found in web/dist/ -- refusing to deploy"
             exit 1
           fi
           echo "bundle clean"

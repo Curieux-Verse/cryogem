@@ -502,3 +502,74 @@ for the excess. It is a floor on the true cost, not an estimate of it. Spec 13
 makes a non-trivial cost drag an acceptance criterion, and the test asserts
 drag > 1% of gross movement — because a cost model that rounds to zero is a
 cost model that is not applied.
+
+---
+
+## D-020 — the spec's own secret-scan criterion cannot pass, so the gate uses shapes
+
+Spec 16.4 lists this acceptance criterion:
+
+```
+grep -ri "api_key\|secret\|token" web/dist/   returns nothing
+```
+
+It can never pass on any React application. Run against the real bundle it
+matches twice, and both are false positives:
+
+* `React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED` — React's own
+  export name, present in every React build ever produced.
+* `"magnitude_tokens"` — a field name in our own `events.json`.
+
+A gate that always fails is a gate somebody disables, and a disabled gate is
+worse than no gate because everyone still believes it is there.
+
+Both gates — `publish.py` before it writes, and `build-site.yml` before it
+deploys — therefore match key **shapes**: `github_pat_…`, `ghp_/gho_/ghu_/ghs_/ghr_…`,
+`hc-ping.com/<uuid>`, `authToken=`, a Telegram `bot<digits>:<secret>`, and
+`api_key`/`auth_token`/`bot_token` followed by an assignment and 16+ credential
+characters. Verified both ways: the patterns catch a synthetic leak file
+containing a PAT, a healthcheck URL and an assigned API key, and pass cleanly
+on the real bundle and the real `data/public/`.
+
+The same reasoning already applied once, to `publish.yml`, whose original
+pattern included the bare word "secret". Our JSON embeds news headlines, so a
+single article with "secret" in the title would have failed the deploy every
+day until the story aged out, for a reason no error message explained.
+
+**The general rule:** a secret scanner matches the shape of a credential. A
+scanner that matches the *vocabulary* of credentials produces false positives
+in proportion to how much English the payload contains — and this payload
+contains headlines.
+
+---
+
+## D-021 — the dashboard's mobile table is stacked, not side-scrolling
+
+Spec 16.4 requires that at 375px "the screen table becomes stacked rows, not a
+horizontal scroll". The first implementation put every table in an
+`overflow-x-auto` container, which keeps the page body from scrolling
+horizontally — necessary, but not the same thing. Measured at a 375px viewport:
+the wrapper's `scrollWidth` was 768 against a `clientWidth` of 375.
+
+For most tables a side scroll is fine. For the ranked table it is not, and the
+reason is what the columns carry: rank and ticker fit on screen, and the six
+block scores — the entire argument for the ranking — sit off the right edge. A
+reader on a phone would see an ordered list of tickers and never learn that the
+justification existed.
+
+So `TableWrap` gained a `narrow="hide"` mode used by exactly one table, and the
+ranked rows render below `sm` as stacked blocks with the six blocks in a 3×2
+grid. Verified at a 375×812 emulated viewport: the table is not rendered, the
+stacked list shows 15 items, `document.body.scrollWidth` does not exceed the
+viewport, and no visible container scrolls horizontally.
+
+Measured at the same time, for the record: Lighthouse accessibility 100, best
+practices 100, SEO 100 (criterion was ≥90); bundle 68.1 KB gzipped against a
+500 KB budget; `/#/asset/ICP` survives a hard refresh, which is what HashRouter
+is for.
+
+**A separate legibility fix from looking at the render.** The funnel drew a `→`
+three pixels to the left of each figure. At that size, against a tabular
+numeral, the arrow reads as a minus sign — so the disqualified count rendered
+as "−321". Wrong, and alarming, on the one number the page most wants
+understood. The arrows now sit centred in a wider gutter.

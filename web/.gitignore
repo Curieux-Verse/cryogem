@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.vite/
+# Copied from ../data/public at build time by scripts/copy-data.mjs.
+# Committing it would duplicate the publisher output in two places.
+public/data/

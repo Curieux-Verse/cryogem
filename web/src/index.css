@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-ground text-ink font-sans antialiased;
+  }
+
+  /* Every figure is tabular-lining. A column of scores that does not align on
+     the decimal is unreadable at 150 rows (spec 16.2). */
+  .num {
+    @apply font-mono tabular-nums text-right;
+  }
+
+  /* Keyboard focus must be visible on every interactive element (spec 16.4
+     acceptance criteria). A focus ring removed for aesthetics makes the site
+     unusable without a mouse. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-pass ring-offset-2 ring-offset-ground;
+  }
+
+  th {
+    @apply text-muted font-medium text-xs uppercase tracking-wide;
+  }
+}
+
+@layer utilities {
+  /* One place in the whole site moves: the funnel on load. Everything else is
+     static unless the user acts. */
+  @keyframes funnel-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .animate-funnel {
+    animation: funnel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-funnel {
+      animation: none;
+    }
+  }
+}
