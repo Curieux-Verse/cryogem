@@ -100,12 +100,17 @@ def screen_command(
         "--skip-freshness",
         help="Bypass the staleness assertion. For backfills only, never in CI.",
     ),
+    no_layer3: bool = typer.Option(
+        False, "--no-layer3", help="Skip the L3 structure pass (needs OHLC history)."
+    ),
 ) -> None:
-    """Run Layer 1 (kill switch) then Layer 2 (demand score) for a date."""
+    """Run Layer 1 (kill switch), Layer 2 (demand score), then Layer 3 (advisory)."""
     from src.screening.pipeline import run_screen
 
     run_date = date or today_utc()
-    result = run_screen(run_date=run_date, enforce_freshness=not skip_freshness)
+    result = run_screen(
+        run_date=run_date, enforce_freshness=not skip_freshness, layer3=not no_layer3
+    )
     typer.echo(
         f"{run_date}: {result['universe']} assets -> "
         f"{result['survivors']} survived L1 ({result['survival_rate']:.1%}) -> "
@@ -113,6 +118,12 @@ def screen_command(
     )
     for row in result["top"]:
         typer.echo(f"  {row['rank']:>2}. {row['base_asset']:<10} {row['total_score']:.1f}")
+    if result.get("layer3_analysed"):
+        typer.echo(
+            f"L3: {result['layer3_analysed']} analysed, {result['layer3_setups']} with a "
+            f"live setup, {result['layer3_flagged']} carrying a risk flag "
+            "(advisory only -- not a buy signal)"
+        )
 
 
 @app.command("journal")

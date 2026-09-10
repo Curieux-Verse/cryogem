@@ -322,3 +322,109 @@ means the collector ran and degraded gracefully around an unconfigured optional
 source. Bucketing `partial` with `failed` reported five working collectors at
 0% success and would have sent the operator chasing an outage that did not
 exist. Failures and degradations are now counted and reported separately.
+
+---
+
+## D-014 — a break needs a recency bound, or a setup is just history
+
+**Status:** fixed in code; new threshold `layer3.max_bars_since_break`.
+
+`detect_break` scans forward from the trendline's last touch to the end of the
+series, so it returns the first close above the line at any point in the
+available history. On the first live Layer 3 run over the 2026-09-09 ranking:
+
+| Asset | Break date | Weekly bars ago | Reported as |
+|---|---|---:|---|
+| MINA | 2026-03-02 | 27 | live setup, invalidation 0.05235 |
+| IOST | 2026-02-09 | 30 | live setup, invalidation 0.001177 |
+
+Both were being published as current setups carrying invalidation levels from
+six and seven months earlier. Position sizing divides by exactly that number,
+so a stale level does not degrade gracefully — it produces a confidently wrong
+position size.
+
+A setup is a present-tense claim. Beyond `max_bars_since_break` (8 weekly bars,
+~2 months) the break is recorded as structure with `setup_type =
+"break_stale"`, `setup_detected` false, and a note stating its age. The
+structure is not deleted — it is context — but it is not reported as
+actionable.
+
+**Second finding from the same run: "no retest yet" was misleading.** It
+implies one may still come. But a descending line keeps descending while price
+holds above it, so beyond a certain gap a retest can never occur. ICP sat 104%
+above its broken line: telling the reader to wait for a retest would have meant
+telling them to wait forever. The note now distinguishes *pending* from
+*impossible*, and says which.
+
+**Third: unmeasured depth was invisible.** A missing depth reading appeared
+only in the prose notes, so `risk_flags` came back empty and every consumer
+that renders flags — the report table, the dashboard, the journal's stored
+`layer3_values` — showed the asset as carrying no risk. Unknown is not
+acceptable, and it now has to look it: `L3_DEPTH_UNKNOWN` is a flag.
+
+---
+
+## D-015 — CVD is not implemented, and is not stubbed with a proxy
+
+Spec 12.2 lists "spot CVD vs perp CVD" among the positioning-risk metrics.
+It is not implemented, and `cvd_divergence()` returns
+`{"available": False, "reason": ...}` rather than a number.
+
+Cumulative volume delta needs per-trade data with an aggressor flag. This
+project collects snapshots, not trade streams, so the input does not exist.
+
+The available substitute — inferring buy and sell pressure from where a bar
+closed inside its range — is not CVD. It is a deterministic function of the
+price move it is supposed to explain, so it would confirm whatever the chart
+already showed while carrying the authority of a microstructure metric. That is
+strictly worse than an honest gap: a missing metric prompts a question, and a
+circular one ends the inquiry.
+
+The spec's own caveats bound how much the real thing would be worth here, and
+they are recorded in the function's docstring: without an aggressor flag, tools
+fall back on the tick rule, which degrades badly in fast markets; CVD works
+poorly on thin altcoin perps, which is exactly this universe; and divergence
+can persist through an entire trend, so it is not a reversal timer.
+
+**To implement properly** would mean a trade-stream collector (Binance
+`@aggTrade` websocket, or the `/fapi/v1/aggTrades` REST endpoint polled per
+symbol), a new table, and a storage budget measured in millions of rows per
+day. That is a project of its own, and it is not on the critical path to the
+first honest backtest.
+
+---
+
+## D-016 — the klines collector, and why it is the only one that backfills
+
+Every other collector in this system can only record the present, because the
+free APIs it reads do not serve history: Binance keeps 30 days of open
+interest, Coinalyze deletes intraday data daily. A day not collected is a day
+that can never be backtested.
+
+Binance klines are the exception — they reach back years — which makes this the
+one collector that can make the dataset older than the project. Two things were
+blocked on it:
+
+* **Layer 3** needs swing highs across months and a close-confirmed break. A
+  table of today's prices cannot produce either.
+* **The journal's excursions** need each day's high and low. The CoinGecko
+  snapshot carries a close only, so before this collector every excursion
+  silently degraded to a close-to-close range — understating the drawdown that
+  decides whether a trade was survivable.
+
+Backfilled 356,358 daily bars across 528 symbols, 2023-09-06 to 2026-09-09.
+
+**The multiplier bug this surfaced.** `parse_symbol` normalises
+`1000PEPEUSDT` to base asset `PEPE`, and `price_daily` is keyed on
+`(snapshot_date, base_asset)` — so the raw close landed under `PEPE` at 1000x
+the real price, in the same column CoinGecko writes at 1x.
+
+What made this dangerous is that it looked harmless. Returns computed inside a
+single source survive a constant scale factor: the journal's percentages were
+all correct. But one day where klines is missing and CoinGecko is not produces
+a 1000x step between consecutive rows — a fabricated +99,900% forward return,
+written into an append-only table, against a real journal entry. Prices are now
+divided by the contract multiplier at the boundary (quote volume is not, being
+already USD notional), and PEPE cross-checks to within 4% of CoinGecko's
+independent price, which is the expected gap between a UTC daily close and a
+live snapshot.

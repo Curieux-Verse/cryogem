@@ -36,6 +36,7 @@ from src.collectors.coinalyze import CoinalyzeLiquidationCollector
 from src.collectors.coingecko import CoinGeckoCollector
 from src.collectors.defillama import DefiLlamaCollector
 from src.collectors.hyperliquid import HyperliquidCollector
+from src.collectors.klines import BinanceKlinesCollector
 from src.collectors.news import NewsCollector
 from src.collectors.unlocks import UnlockCollector
 from src.logging_setup import get_logger
@@ -58,6 +59,7 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     "attention": AttentionCollector,
     "market_regime": MarketRegimeCollector,
     "news": NewsCollector,
+    "binance_klines": BinanceKlinesCollector,
 }
 
 #: Ordered per tier. Universe first -- later collectors read it.
@@ -73,6 +75,10 @@ TIERS: dict[str, list[str]] = {
         "announcements",
         "attention",
         "market_regime",
+        # After coingecko, so its full OHLC replaces the close-only snapshot
+        # rather than the reverse. Both write price_daily; only this one has a
+        # high and a low, which is what the journal's excursions need.
+        "binance_klines",
         "binance_derivatives",  # one daily snapshot even without the hourly tier
     ],
     # Hourly. Builds the derivatives time series.

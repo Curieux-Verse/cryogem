@@ -129,9 +129,11 @@ def build_latest(db: Database, run_date: str, payload: dict[str, Any]) -> dict[s
     publish that failed until 19:00 are different situations, and the reader
     needs to see the second one.
     """
+    layer3 = payload.get("layer3") or {}
     ranked = []
     for row in payload["ranked"]:
         percentiles = json_load(row["percentiles"], {}) or {}
+        l3 = layer3.get(row["base_asset"])
         ranked.append(
             {
                 "rank": row["rank"],
@@ -150,6 +152,20 @@ def build_latest(db: Database, run_date: str, payload: dict[str, Any]) -> dict[s
                 # The detail file this row links to. Not derivable in the
                 # browser: see _safe_name.
                 "file": f"assets/{_safe_name(row['base_asset'])}.json",
+                # Advisory, and nested under its own key so no consumer can
+                # mistake a structural read for part of the score.
+                "layer3": (
+                    {
+                        "setup_detected": bool(l3["setup_detected"]),
+                        "setup_type": l3["setup_type"],
+                        "invalidation_price": l3["invalidation_price"],
+                        "risk_flags": json_load(l3["risk_flags"], []) or [],
+                        "depth_2pct_usd": l3["depth_2pct_usd"],
+                        "funding_pctile": l3["funding_pctile"],
+                    }
+                    if l3
+                    else None
+                ),
             }
         )
 

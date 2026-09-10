@@ -101,6 +101,12 @@ def gather(db: Database, run_date: str) -> dict[str, Any]:
         (run_date,),
     )
 
+    l3 = db.query(
+        "SELECT base_asset, setup_detected, setup_type, invalidation_price, "
+        "       risk_flags, depth_2pct_usd, funding_pctile FROM layer3_result "
+        "WHERE run_date = ?",
+        (run_date,),
+    )
     survivors = {r["base_asset"] for r in l1 if r["passed"]}
     failures = [r for r in l1 if not r["passed"]]
 
@@ -126,6 +132,7 @@ def gather(db: Database, run_date: str) -> dict[str, Any]:
         "survivors": len(survivors),
         "survival_rate": len(survivors) / len(l1) if l1 else 0.0,
         "ranked": l2,
+        "layer3": {r["base_asset"]: r for r in l3},
         "failures": failures,
         "dark_checks": sorted(dark),
         "events": _upcoming_events(db, run_date, survivors),
@@ -361,6 +368,9 @@ def render(payload: dict[str, Any]) -> str:
             "",
         ]
 
+    # -- layer 3 ------------------------------------------------------------
+    lines += _layer3_section(p)
+
     # -- notable disqualifications -----------------------------------------
     lines += ["## Notable disqualifications", ""]
     notable = _notable_failures(p["failures"])
@@ -421,6 +431,60 @@ def render(payload: dict[str, Any]) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _layer3_section(payload: dict[str, Any]) -> list[str]:
+    """Structure and positioning risk on the ranked head.
+
+    Deliberately placed BELOW the ranking and labelled advisory. Layer 3 cannot
+    promote anything, and a section that appears above the ranking reads like
+    a recommendation list -- which is exactly the TRB failure mode, where a
+    derivatives reading was treated as a reason to buy.
+    """
+    l3 = payload.get("layer3") or {}
+    if not l3:
+        return []
+
+    ranked = payload["ranked"][: payload["report_top_n"]]
+    rows = [(r["base_asset"], l3[r["base_asset"]]) for r in ranked if r["base_asset"] in l3]
+    if not rows:
+        return []
+
+    lines = [
+        "## Layer 3 — structure and positioning risk (advisory)",
+        "",
+        "Layer 3 never promotes an asset. It says where a thesis would be wrong "
+        "and how fragile the positioning is. A derivatives reading is a RISK "
+        "check, never a buy trigger.",
+        "",
+        "| Asset | Setup | Invalidation | Bid depth ±2% | Risk flags |",
+        "|---|---|---:|---:|---|",
+    ]
+    for asset, row in rows:
+        setup = row["setup_type"] or "—"
+        if not row["setup_detected"] and row["setup_type"]:
+            setup = f"{setup} (not live)"
+        invalidation = row["invalidation_price"]
+        depth = row["depth_2pct_usd"]
+        flags = json_load(row["risk_flags"], []) or []
+        lines.append(
+            "| {asset} | {setup} | {invalidation} | {depth} | {flags} |".format(
+                asset=asset,
+                setup=setup,
+                invalidation="—" if invalidation is None else f"{invalidation:,.6g}",
+                depth="—" if depth is None else f"${depth:,.0f}",
+                flags=", ".join(flags) or "—",
+            )
+        )
+    live = sum(1 for _, r in rows if r["setup_detected"])
+    lines.append("")
+    lines.append(
+        f"{live} of {len(rows)} reported assets carry a live setup with an explicit "
+        "invalidation level. The rest are shown so the absence is visible: no "
+        "level, no candidate."
+    )
+    lines.append("")
+    return lines
 
 
 def _notable_failures(failures: list[dict[str, Any]], limit: int = 15) -> list[dict[str, Any]]:

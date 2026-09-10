@@ -79,6 +79,11 @@ layer3:
   trendline_min_touches: 3
   trendline_tolerance_pct: 0.02      # TUNE_ME — how close a high must sit to the line
   swing_window_bars: 3               # bars each side for a swing-high pivot
+  max_bars_since_break: 8            # TUNE_ME — a break older than this is history,
+                                     # not a setup. At 1W bars that is ~2 months.
+                                     # Observed 2026-09-09: without this bound, MINA
+                                     # (27 weeks) and IOST (30 weeks) were reported
+                                     # as live with invalidation levels from March.
 
 collectors:
   derivatives_interval_minutes: 5

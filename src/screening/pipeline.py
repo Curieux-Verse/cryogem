@@ -258,7 +258,11 @@ def run_layer1(
     return results, coverage
 
 
-def run_screen(run_date: str | None = None, enforce_freshness: bool = True) -> dict[str, Any]:
+def run_screen(
+    run_date: str | None = None,
+    enforce_freshness: bool = True,
+    layer3: bool = True,
+) -> dict[str, Any]:
     """The daily screen: L1 then L2. Returns a summary for the CLI."""
     date = run_date or today_utc()
     with get_db() as db:
@@ -278,6 +282,20 @@ def run_screen(run_date: str | None = None, enforce_freshness: bool = True) -> d
 
         ranked = run_layer2(db, date, survivors)
 
+        # Layer 3 runs on the ranked head only, and ONLY after the ranking
+        # exists. It is advisory: it annotates and can veto, and there is no
+        # path by which it reorders or promotes anything. Running it here means
+        # the journal captures the structural read that was live on the day,
+        # rather than one re-derived later from a different chart.
+        from src.screening.layer3_structure import run_layer3
+
+        layer3_rows: list[dict[str, Any]] = []
+        if layer3 and ranked:
+            top_n = get_config().thresholds.journal.top_n_to_journal
+            layer3_rows = run_layer3(
+                db, date, [r["base_asset"] for r in ranked[:top_n]]
+            )
+
     report_n = get_config().thresholds.journal.report_top_n
     return {
         "run_date": date,
@@ -287,6 +305,9 @@ def run_screen(run_date: str | None = None, enforce_freshness: bool = True) -> d
         "ranked": len(ranked),
         "coverage": coverage,
         "dark_checks": sorted({c for r in results for c in r.dark_checks}),
+        "layer3_analysed": len(layer3_rows),
+        "layer3_setups": sum(r["setup_detected"] for r in layer3_rows),
+        "layer3_flagged": sum(1 for r in layer3_rows if r["risk_flags"] not in (None, "[]")),
         "top": [
             {"rank": row["rank"], "base_asset": row["base_asset"], "total_score": row["total_score"]}
             for row in ranked[:report_n]

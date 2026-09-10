@@ -150,6 +150,7 @@ class Layer3Thresholds(BaseModel):
     trendline_min_touches: int
     trendline_tolerance_pct: float
     swing_window_bars: int
+    max_bars_since_break: int
 
 
 class CollectorThresholds(BaseModel):
