@@ -428,3 +428,77 @@ divided by the contract multiplier at the boundary (quote volume is not, being
 already USD notional), and PEPE cross-checks to within 4% of CoinGecko's
 independent price, which is the expected gap between a UTC daily close and a
 live snapshot.
+
+---
+
+## D-017 — the harness replays recorded rankings; it does not re-screen history
+
+The obvious way to backtest is to loop over dates and call `run_screen(date)`
+for each. It is wrong, and the reason is worth stating because the code looks
+correct.
+
+L1 and L2 read `fundamentals_snapshot`, `holder_snapshot`, `supply_metrics` and
+`scheduled_event`. Those tables are **revised after the fact**: DefiLlama
+restates revenue, holder distributions change as the chain advances, and unlock
+calendars are corrected. Re-screening 2026-03-01 today would score assets using
+the September versions of those rows — information that did not exist in March.
+The result is a backtest of hindsight, and it would look excellent.
+
+So the harness reads `layer2_result` rows **as they were written on the day**,
+and a date with no recorded ranking is a date it skips. This is why
+`MIN_SCREENING_DAYS` exists at all: the constraint is not compute, it is that
+the ranking has to have been recorded live. There is no way to shortcut it, and
+that is the point.
+
+The one thing the harness does recompute is the regime label, from
+`price_daily` rather than from `market_regime`. That is safe — a 30-day BTC
+return is not revised — and necessary, because the regime collector did not run
+on every day and silently dropping those days would test a different sample.
+
+---
+
+## D-018 — the holdout audit log was itself defeatable
+
+`record_holdout_run` exists so that "test once on the final third" is enforced
+rather than promised: every holdout run is logged and the harness reports the
+count back, so a fourth-attempt result cannot later be presented as
+out-of-sample.
+
+The first implementation stored the record via
+`deterministic_id("holdout", start, end, utc_now_iso())`. `utc_now_iso()` has
+second resolution, so two holdout runs inside the same second produced the
+**same** id, the upsert replaced the row, and the counter stayed at 1.
+
+`test_a_second_holdout_run_is_labelled_as_no_longer_out_of_sample` caught it:
+expected 2, got 1.
+
+An audit log whose rows can overwrite each other is not an audit log. There is
+now a dedicated `backtest_run` table with a random `uuid4` primary key, and a
+test asserts three consecutive recordings count 1, 2, 3.
+
+The general lesson, which applies to more of this project than this one
+function: a deterministic id is right for *idempotent data* — re-fetching the
+same bar must not duplicate it — and wrong for an *audit record of a distinct
+event*. Those are opposite requirements and they were being served by the same
+helper.
+
+---
+
+## D-019 — slippage with no recorded depth costs the full band, not zero
+
+`slippage_cost` returns the full 2% band when `depth_snapshot` has nothing for
+the asset. The tempting default is 0.0, and it is the single most consequential
+sign error available in a cost model: it would make the *least* liquid assets —
+the ones with no depth measurement precisely because nobody collected a book
+for them — the *cheapest* to trade in the backtest. The strategy would then
+appear to earn its return from exactly the assets it could never have exited.
+
+Same reasoning as `L3_DEPTH_UNKNOWN`: unknown is not acceptable, and in a cost
+model the honest direction for an unknown is expensive.
+
+The model is deliberately crude and pessimistic: a position inside the recorded
+±2% bid depth pays proportionally, and anything beyond it pays the band again
+for the excess. It is a floor on the true cost, not an estimate of it. Spec 13
+makes a non-trivial cost drag an acceptance criterion, and the test asserts
+drag > 1% of gross movement — because a cost model that rounds to zero is a
+cost model that is not applied.

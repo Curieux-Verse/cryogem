@@ -47,6 +47,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "price_daily": ("snapshot_date", "base_asset"),
     "collector_run": ("run_id",),
     "table_stats": ("table_name",),
+    "backtest_run": ("run_id",),
     "trigger_lag": ("run_id",),
     "journal_entry": ("entry_id",),
     "forward_return": ("entry_id", "horizon"),

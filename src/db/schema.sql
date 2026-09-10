@@ -401,6 +401,32 @@ CREATE TABLE IF NOT EXISTS table_stats (
 -- Trigger-lag record: intended fire time vs the workflow real start.
 -- Surfaced on the Health page. If this reads in tens of minutes, an
 -- on-schedule trigger is still live somewhere in the repo.
+-- BACKTEST RUNS: the holdout audit log.
+-- "Test once on the final third" is a promise no code can keep by asking
+-- politely, so every holdout run is recorded here and the harness reports the
+-- count back. A second run is not blocked -- there are legitimate reasons to
+-- re-run after a bug fix -- but it is labelled, so a fourth-attempt result can
+-- never be presented as an out-of-sample one.
+--
+-- run_id is a RANDOM uuid, not a deterministic hash. The first version keyed
+-- it on (window, timestamp-to-the-second): two runs inside the same second
+-- produced the same id, the upsert replaced the row, and the counter stayed at
+-- one. An audit log whose rows can overwrite each other is not an audit log.
+CREATE TABLE IF NOT EXISTS backtest_run (
+    run_id          TEXT PRIMARY KEY,
+    split           TEXT NOT NULL,
+    window_start    TEXT NOT NULL,
+    window_end      TEXT NOT NULL,
+    horizon         TEXT NOT NULL,
+    trades          INTEGER,
+    median_vs_btc   REAL,
+    mean_vs_btc     REAL,
+    cost_drag       REAL,
+    ran_at_utc      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_run_split ON backtest_run(split, ran_at_utc);
+
 CREATE TABLE IF NOT EXISTS trigger_lag (
     run_id              TEXT PRIMARY KEY,
     workflow            TEXT NOT NULL,
