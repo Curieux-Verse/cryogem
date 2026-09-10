@@ -215,3 +215,110 @@ when `earliest > date`, and the entry stays pending.
 **Rule this generalises to:** a tolerance window expressed in absolute days is
 wrong whenever it is compared against an interval that can be shorter than the
 window. Bound it by the interval, not by a constant.
+
+---
+
+## D-011 — the rejection wall is ordered by market cap, not by a shadow L2 score
+
+**Status:** deliberate deviation from spec 14 and 16.3.
+
+Both spec sections ask for disqualified assets ordered by "what its L2 score
+would have been". That number cannot be produced honestly.
+
+Layer 2 is a **cross-sectional** ranking: every block score is a percentile
+within the day's scored population. So a score for a disqualified asset
+requires one of:
+
+1. **Admitting it to the cross-section.** This changes every survivor's
+   percentile, which means the published ranking would depend on the rejects —
+   the exact coupling the disqualification-first architecture exists to remove.
+2. **Scoring it against a population it is not in.** Defensible arithmetic, but
+   the resulting number is not comparable to any survivor's score while looking
+   exactly like one. On a page whose purpose is showing what the filter
+   removed, a number that invites "but it scored 74, higher than #3" is worse
+   than no number.
+3. **A second, separate scoring pass.** Same problem as (2), plus a second code
+   path through the scorer that no test covers as production behaviour.
+
+**What the code does instead.** Rejected assets are ordered by market cap
+descending, within groups by the check that killed them. This serves the page's
+actual purpose better: the biggest name the filter removed is the one the
+operator is most likely to believe it got wrong, and therefore the row that
+most needs to show its computed value against its threshold. On 2026-09-09 the
+top row was XMR at $9.6B, disqualified on a perp/spot volume ratio of 87.7x
+against a threshold of 40 — a rejection worth understanding, and one that a
+score-ordered list would have buried.
+
+The markdown table additionally sorts assets failing a **single** check ahead of
+those failing several: one failed check is the asset that came closest to
+surviving, which is where a mis-calibrated threshold surfaces first.
+
+**The invariant that matters:** no ordering heuristic anywhere can promote a
+disqualified asset. L1 remains a binary kill switch with no override.
+
+---
+
+## D-012 — two publish-boundary defects found by running the publisher
+
+Both were found by inspecting real output rather than by review, and both would
+have been invisible until the dashboard existed.
+
+**1. `float("inf")` serialised as a bare `Infinity`.**
+
+An orphan perp — a perpetual with no same-venue spot pair — deliberately gets a
+perp/spot ratio of `float("inf")` rather than `None`, because "no spot pair"
+is an infinite ratio and recording it as missing would let it pass a check it
+must fail. 163 of 528 contracts were orphans on 2026-09-09.
+
+`json.dumps` accepts non-finite floats by default and emits `Infinity`, which is
+**not valid JSON**. `JSON.parse` throws on it. Every asset page for an orphan
+perp, plus the entire rejection wall, would have failed to load — on precisely
+the assets the check exists to catch — with a parse error and no indication of
+the cause.
+
+Fixed by `_json_safe()`: non-finite values cross the boundary as the strings
+`"Infinity"` / `"-Infinity"` (NaN becomes `null`), and the writer passes
+`allow_nan=False` so anything the sanitiser misses raises instead of shipping
+an unreadable file. A test parses every published file with `parse_constant`
+set to fail.
+
+**2. Filename sanitising was not injective.**
+
+`_safe_name()` replaced unsafe characters to keep a ticker from escaping the
+assets directory. Binance lists five CJK-named contracts; all five sanitised to
+`unknown.json`. Four assets were silently overwritten, and the dashboard would
+have shown one asset's verdict under five different tickers.
+
+Path safety and uniqueness are two requirements, and a substitution only
+satisfies the first. An already-safe ticker now keeps its own name
+(`BTC.json`, `1000PEPE.json`); anything altered gets a stable hash suffix, and
+`manifest.json` publishes the ticker → filename map, because a name the
+dashboard cannot reverse is a link it cannot build.
+
+---
+
+## D-013 — a row is not a measurement
+
+The data-quality section originally counted rows per input table. Two of its
+figures were actively misleading on the first real run:
+
+* `fundamentals_snapshot` read **100%** of the universe. The DefiLlama
+  collector writes a row for every asset with `has_fundamentals = 0` where no
+  protocol is mapped: 657 rows, of which **13** carried a fundamental. An
+  operator reading 100% would trust the fundamental block; it was fed for 2.3%
+  of the universe, which is why every `Fund` cell in the top 15 is blank.
+* `market_snapshot` read **230.7%**, because CoinGecko covers 1,218 assets and
+  only 528 of them have a perp. A coverage figure above 100% is not a rounding
+  artefact — it is the wrong question.
+
+Coverage is now (a) intersected with the day's screened universe and (b)
+per-table explicit about what counts as measured (`has_fundamentals = 1`,
+`top10_share IS NOT NULL`, and so on). Both figures are reported side by side —
+`Measured` and `Rows` — so the gap between them is visible rather than
+resolved in favour of the flattering number.
+
+Related, same section: `collector_run.status` has three values, and `partial`
+means the collector ran and degraded gracefully around an unconfigured optional
+source. Bucketing `partial` with `failed` reported five working collectors at
+0% success and would have sent the operator chasing an outage that did not
+exist. Failures and degradations are now counted and reported separately.
