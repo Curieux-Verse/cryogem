@@ -173,3 +173,45 @@ removed every crash from the check's coverage while leaving it looking
 operational, and the check's whole purpose is detecting a collapse whose market
 cap loss is impossible against its liquidation volume. It would have failed
 exactly when it was needed.
+
+---
+
+## D-010 — the horizon price lookback may not reach the signal day
+
+**Status:** fixed in code. Found by a Phase 6 test, not by review.
+
+`_price_at()` resolved "the price at the horizon" as the closing price on the
+target date, or the nearest earlier day within a week. The week of tolerance is
+there for a good reason: one missed collection day should not permanently void
+an entry's 30-day return.
+
+**The defect.** The tolerance was a flat seven days regardless of horizon. At
+the 1d horizon the target date is `run_date + 1`, so a week of lookback reaches
+back to `run_date - 6` — including the signal day itself. With no price yet
+collected for the day after the signal, the query happily returned the ENTRY
+price, and the computed 1-day forward return was exactly 0.000000.
+
+`test_missing_future_price_leaves_the_row_pending` asserted zero rows written
+and got four.
+
+**Why this was worse than a crash.** A missing return is visible: the entry
+stays pending and the report says how much data is short. A 0.00% return is
+invisible — it enters the statistics as a real observation, and because
+`forward_return` is append-only it could never be corrected. Every 1d
+horizon would have been silently pulled toward zero, and the more reliable the
+collector, the *less* often it would happen — so the corruption would have been
+worst in exactly the early period when the sample is smallest.
+
+**What the code does now.** The caller passes an explicit floor:
+
+```
+earliest = max(add_days(target_date, -7), add_days(run_date, 1))
+```
+
+so the lookback keeps its week of slack at long horizons and collapses to the
+exact day at 1d, where there is no slack to give. `_price_at` returns `None`
+when `earliest > date`, and the entry stays pending.
+
+**Rule this generalises to:** a tolerance window expressed in absolute days is
+wrong whenever it is compared against an interval that can be shorter than the
+window. Bound it by the interval, not by a constant.
