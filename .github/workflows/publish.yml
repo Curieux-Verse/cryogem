@@ -49,13 +49,19 @@ jobs:
 
       # Belt and braces before anything becomes public. The repo is public and
       # a key committed once is a key compromised forever.
+      # Match key SHAPES, not key WORDS. The previous pattern included the
+      # bare word "secret", and data/public/*.json embeds news headlines: one
+      # article titled "...secret..." would have failed this gate every day
+      # until the story aged out, blocking the deploy for a reason no error
+      # message explained. src/report/publish.py applies the same patterns
+      # before writing, so this is the second of two independent gates.
       - name: Refuse to publish anything key-shaped
         run: |
-          if grep -rIlE '(api[_-]?key|auth[_-]?token|bearer |secret)' data/public/ ; then
-            echo "::error::key-like string found in data/public/ -- refusing to commit"
+          if grep -rIlE 'github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|hc-ping\.com/[0-9a-f-]{36}|authToken=|bot[0-9]{8,}:[A-Za-z0-9_-]{30,}|(api[_-]?key|auth[_-]?token|bot_token)"?[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9_-]{16,}' data/public/ ; then
+            echo "::error::key-shaped string found in data/public/ -- refusing to commit"
             exit 1
           fi
-          echo "no key-like strings in data/public/"
+          echo "no key-shaped strings in data/public/"
 
       - name: Commit if changed
         uses: stefanzweifel/git-auto-commit-action@v5

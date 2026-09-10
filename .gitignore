@@ -10,10 +10,17 @@
 *.sqlite
 *.sqlite3
 
-# Local data. NOTE: data/public/ IS committed (the site reads it) — see negation below.
-data/
+# Local data. NOTE: data/public/ IS committed -- the site reads it, and the
+# push to data/public/** is what triggers build-site.yml.
+#
+# It must be `data/*`, NOT `data/`. Git does not descend into an excluded
+# DIRECTORY, so a trailing-slash exclude makes every later negation
+# unreachable: `git check-ignore -v data/public/latest.json` reported
+# `.gitignore:14: data/`. The publish workflow would have found nothing to
+# commit, build-site would never have fired, and the dashboard would have sat
+# at its first deploy indefinitely -- with no error anywhere.
+data/*
 !data/public/
-!data/public/**
 
 # Logs
 logs/

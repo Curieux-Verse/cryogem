@@ -33,6 +33,24 @@ jobs:
           fi
           echo "no scheduled triggers -- correct"
 
+      - name: data/public must be committable
+        run: |
+          # `data/` (with a trailing slash) in .gitignore makes every later
+          # negation unreachable, because git does not descend into an excluded
+          # directory. The failure is silent and total: publish.yml commits
+          # nothing, build-site.yml never fires, and the dashboard stays frozen
+          # at its first deploy with no error anywhere. Assert the path is
+          # actually committable rather than trusting the negation.
+          mkdir -p data/public
+          echo '{}' > data/public/.ci-probe.json
+          if git check-ignore -q data/public/.ci-probe.json ; then
+            rm -f data/public/.ci-probe.json
+            echo "::error::data/public is gitignored. Use 'data/*' not 'data/' so the negation applies."
+            exit 1
+          fi
+          rm -f data/public/.ci-probe.json
+          echo "data/public is committable -- correct"
+
       - name: Every workflow must set timeout-minutes
         run: |
           missing=0

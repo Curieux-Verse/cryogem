@@ -277,12 +277,23 @@ def build_asset(
         "ORDER BY snapshot_date DESC LIMIT 1",
         (base_asset, run_date),
     )
-    prices = db.query(
+    price_rows = db.query(
         "SELECT snapshot_date, open_usd, high_usd, low_usd, close_usd "
         "FROM price_daily WHERE base_asset = ? AND snapshot_date BETWEEN ? AND ? "
         "ORDER BY snapshot_date",
         (base_asset, add_days(run_date, -cfg.settings.reporting.history_window_days), run_date),
     )
+    # Columnar, not one object per day. These files are COMMITTED daily and the
+    # repo keeps every version forever: at 90 days of history across ~530
+    # assets, repeating five key names per bar costs roughly 2 MB per day of
+    # permanent git history for no added information.
+    prices = {
+        "columns": ["date", "o", "h", "l", "c"],
+        "rows": [
+            [r["snapshot_date"], r["open_usd"], r["high_usd"], r["low_usd"], r["close_usd"]]
+            for r in price_rows
+        ],
+    }
     events = db.query(
         "SELECT event_date_utc, event_type, recipient_type, pct_of_circulating, "
         "magnitude_usd, confidence, description FROM scheduled_event "
