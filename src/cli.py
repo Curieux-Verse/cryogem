@@ -200,6 +200,43 @@ def backtest_command(
     typer.echo(harness.render_report(start=start, end=end, holdout=holdout))
 
 
+@app.command("migrate-turso")
+def migrate_turso_command(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Count what would move. Writes nothing."
+    ),
+    verify: bool = typer.Option(
+        False, "--verify", help="Check Turso's row counts and append-only triggers."
+    ),
+) -> None:
+    """Copy the local SQLite database into Turso. One-way, run once at cutover.
+
+    Most of what moves is replaceable from the APIs. The journal and the
+    point-in-time layer1/layer2 results are not: they record what the system
+    believed on a given day, and recomputing them later would use revised data.
+    """
+    from src.ops import migrate as migrate_ops
+
+    if verify:
+        state = migrate_ops.verify()
+        for table, count in state["counts"].items():
+            typer.echo(f"  {table:24s} {count:>8,}")
+        typer.echo("")
+        typer.echo(f"append-only enforced: {state['append_only_enforced']}")
+        typer.echo(f"detail: {state['detail']}")
+        return
+
+    results = migrate_ops.migrate(dry_run=dry_run)
+    for row in results:
+        note = f"  ({row['skipped']})" if row.get("skipped") else ""
+        typer.echo(f"  {row['table']:24s} {row['rows']:>8,} rows{note}")
+    total = sum(r["copied"] for r in results)
+    typer.echo("")
+    typer.echo(
+        "DRY RUN - nothing written" if dry_run else f"{total:,} rows copied into Turso"
+    )
+
+
 @app.command("doctor")
 def doctor_command() -> None:
     """Check configuration, database and data freshness. Prints what is wrong."""

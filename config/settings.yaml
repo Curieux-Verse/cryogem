@@ -3,7 +3,7 @@
 project:
   name: gem-screener
   # Public URL of the dashboard. Used only for report links.
-  site_url: ""            # e.g. https://<user>.github.io/gem-screener/
+  site_url: "https://curieux-verse.github.io/cryogem/"            # e.g. https://<user>.github.io/gem-screener/
 
 database:
   local_path: "data/gem.db"
