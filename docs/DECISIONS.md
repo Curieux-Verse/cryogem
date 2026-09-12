@@ -835,3 +835,30 @@ does not cover, because the banner is baked into the stale bundle.
 the build job is guarded on `conclusion == 'success'` so a failed publish never
 deploys. The `push` trigger stays for human pushes, which carry a real actor's
 token and do raise the event.
+
+---
+
+## D-033 — The healthcheck guard moved out of `if:` and into the shell
+
+Every pinging workflow carried `if: success() && env.HC != ''` with `HC` bound
+in that same step's `env:` block. A step's own `env:` is **not** in scope for
+that step's `if` expression — only workflow-level and job-level env is, because
+those are bound at workflow initialisation and the step's are not. So `env.HC`
+resolved to empty, `'' != ''` was false, and the ping step was skipped on every
+run of all four workflows.
+
+This is the worst shape a bug can take in this system. GitHub reports the job
+green and the step "skipped". healthchecks.io reports `Last Ping: Never`, which
+is indistinguishable from a wrong UUID or a missing secret — so the obvious
+response is to re-copy the UUID, watch it stay grey, and eventually delete the
+check. The monitoring layer would have been dismantled by hand, in good faith,
+because it appeared to be the thing that was broken.
+
+The guard now runs in the shell (`if [ -z "$HC" ]`). `if: success()` stays: a
+failed job must send nothing, because the missed ping is the entire signal and
+is the one failure cron-job.org structurally cannot see, having already had its
+204 the moment the workflow was queued.
+
+Verified against GitHub's context-availability rules rather than assumed; the
+docs list `env` as available in a step `if` without stating the scope, which is
+precisely why this read as correct in review.

@@ -55,7 +55,24 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 
       - name: Healthcheck ping
-        if: success() && env.HC != ''
+        # The guard is in the SHELL, not in `if:`. A step's own `env:` block is
+        # not in scope for that same step's `if` expression -- only workflow-
+        # and job-level env is, because those are bound at workflow init and the
+        # step's are not. `if: env.HC != ''` therefore compared '' against '',
+        # was false on every run, and the step was skipped forever. The failure
+        # is invisible from GitHub's side: the job is green and the step reads
+        # "skipped", while healthchecks.io says "Last Ping: Never" and looks for
+        # all the world like a wrong UUID.
+        #
+        # Pinging stays conditional on success(). A failed job must send NOTHING:
+        # the missed ping is the whole signal, and it is the one failure mode
+        # cron-job.org structurally cannot see, having already had its 204.
+        if: success()
         env:
           HC: ${{ secrets.HEALTHCHECK_HOURLY }}
-        run: curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+        run: |
+          if [ -z "$HC" ]; then
+            echo "::notice::HEALTHCHECK_HOURLY is unset; skipping healthcheck ping"
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
