@@ -57,3 +57,6 @@ turso_key.txt
 *_token.txt
 *.key
 secrets.json
+pat.txt
+*pat*.txt
+*.pat

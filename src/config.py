@@ -56,6 +56,7 @@ class Secrets(BaseSettings):
     healthcheck_daily: str | None = None
     healthcheck_hourly: str | None = None
     healthcheck_journal: str | None = None
+    healthcheck_screen: str | None = None
 
     @field_validator("*", mode="before")
     @classmethod
