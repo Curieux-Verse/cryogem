@@ -42,6 +42,21 @@ API_BASE = "https://api.telegram.org"
 #: visible marker beats a 400 that loses the whole notification.
 MAX_MESSAGE_CHARS = 4000
 
+#: Characters legacy Markdown (parse_mode="Markdown") reads as entity
+#: delimiters. An unclosed one gets the WHOLE message rejected, and every check
+#: ID in this system carries an underscore -- L1_HOLDER_CONC, L1_UNLOCK -- so
+#: an unescaped dark-check line would fail delivery on exactly the days that
+#: line matters. The Bot API's escape for these is a preceding backslash.
+_MARKDOWN_SPECIAL = ("_", "*", "`", "[")
+
+
+def _md(text: object) -> str:
+    """Escape dynamic text for legacy Markdown. Never apply to our own markup."""
+    out = str(text)
+    for char in _MARKDOWN_SPECIAL:
+        out = out.replace(char, "\\" + char)
+    return out
+
 
 def is_configured() -> bool:
     secrets = get_config().secrets
@@ -113,12 +128,13 @@ def format_summary(payload: dict[str, Any]) -> str:
 
     regime = p.get("regime") or {}
     if regime.get("regime"):
-        lines.append(f"Regime: {regime['regime']}")
+        lines.append(f"Regime: {_md(regime['regime'])}")
 
     if p["dark_checks"]:
         lines.append("")
         lines.append(
-            "*Checks dark:* " + ", ".join(p["dark_checks"]) + " - survivors are "
+            "*Checks dark:* " + ", ".join(_md(check) for check in p["dark_checks"])
+            + " - survivors are "
             "UNMEASURED on these, not clean."
         )
 

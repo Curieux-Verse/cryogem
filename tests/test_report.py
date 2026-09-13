@@ -375,7 +375,9 @@ class TestTelegram:
         ]
         _seed(db, rows, ranked=[("AAA", 80.0, 1)])
         text = telegram.format_summary(daily.gather(db, RUN_DATE))
-        assert "L1_UNLOCK" in text
+        # Escaped for parse_mode=Markdown, where a bare `_` opens italics and an
+        # unclosed one gets the message refused. Telegram displays it as L1_UNLOCK.
+        assert r"L1\_UNLOCK" in text
         assert "UNMEASURED" in text
         # The summary must not read as a recommendation.
         assert "not a buy signal" in text

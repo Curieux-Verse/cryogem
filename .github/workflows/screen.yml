@@ -1,5 +1,6 @@
 # =============================================================================
-# WHY: runs L1 then L2 after the daily collection completes.
+# WHY: runs L1 then L2 after the daily collection completes, then sends the
+# phone-sized summary to Telegram.
 #
 # Triggered by workflow_run rather than by cron, so it cannot run before the
 # data it needs exists. The `conclusion == 'success'` guard matters: without
@@ -65,6 +66,38 @@ jobs:
           fi
         env:
           RUN_DATE: ${{ inputs.date }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      # After the screen, so it reports today's ranking; before the ping, so the
+      # ping still means "the screen succeeded" and nothing more.
+      #
+      # continue-on-error: the notification is the least important artefact in
+      # the pipeline and must be the least able to break it. publish runs only
+      # when this job concludes success, so a Telegram outage must not stop the
+      # dashboard updating. A failed send still shows as a failed step on a
+      # green job -- visible, not swallowed.
+      #
+      # Unset secrets are a notice and exit 0: Telegram is optional. The CLI
+      # exits non-zero only when it IS configured and delivery failed (a wrong
+      # token, or a chat the bot has never been messaged from).
+      - name: Send Telegram summary
+        continue-on-error: true
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::notice::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is unset; skipping the summary"
+            exit 0
+          fi
+          if [ -n "$RUN_DATE" ]; then
+            python -m src.cli report --telegram --date "$RUN_DATE"
+          else
+            python -m src.cli report --telegram
+          fi
+        env:
+          RUN_DATE: ${{ inputs.date }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           PYTHONIOENCODING: utf-8

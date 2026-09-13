@@ -862,3 +862,46 @@ is the one failure cron-job.org structurally cannot see, having already had its
 Verified against GitHub's context-availability rules rather than assumed; the
 docs list `env` as available in a step `if` without stating the scope, which is
 precisely why this read as correct in review.
+
+---
+
+## D-034 — The daily summary is sent from `screen`, and a failed send is not "skipped"
+
+**Date:** 2026-09-13 · **Status:** accepted
+
+Phase 9 built Telegram delivery and wired it into the CLI only. No workflow
+passed `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` to a job and none ran
+`report --telegram`, so setting both secrets produced no message, ever, and
+nothing reported the gap.
+
+`screen.yml` now sends the summary after the screen and before the healthcheck
+ping, with `continue-on-error: true`. `publish` runs only when `screen`
+concludes success, so an unguarded Telegram outage would stop the dashboard
+updating over the least important artefact in the pipeline. The ping stays
+after it and still means "the screen succeeded".
+
+The CLI printed `telegram: not configured, skipped` for every unsent message --
+including a configured bot whose token Telegram rejected. That reads as a setup
+gap when it is a delivery failure. Unset secrets are now a skip (exit 0); a
+configured send that fails exits 1, which marks the step failed on a green job.
+
+**Verified, not assumed.** httpx logs every request at INFO with the full URL,
+and Telegram carries the bot token as a URL path segment, so `telegram.py`'s
+care never to log the URL does not cover httpx's own line. Driving the real
+`send_message` through the real logging configuration against a mocked
+Telegram, for both 200 and 401, produced
+`https://api.telegram.org/***redacted***/sendMessage` in the console and the
+JSON log: the value-shape redactor (D-025) catches it. GitHub also masks
+registered secrets in Actions logs; this does not rely on that.
+`tests/test_telegram_delivery.py` pins the redacted line and the three CLI
+outcomes.
+
+**Found while wiring it up: the summary itself would have been rejected.**
+`send_message` uses `parse_mode: Markdown`, where `_` opens italics, and every
+check ID carries underscores. The 10 Sep dark-check line --
+`L1_HOLDER_CONC, L1_MCAP_LIQ, L1_UNLOCK` -- holds five, so an entity is left
+unclosed and, under the Bot API's Markdown rules, the whole message is refused.
+The first send from Actions would have failed on precisely the days the
+dark-check line exists to be read. Dynamic text is now escaped with a
+backslash; `TestSummaryIsParseableMarkdown` asserts no unescaped `_` or `[`,
+and no unbalanced `*`, survives outside a code span.

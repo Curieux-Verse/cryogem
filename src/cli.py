@@ -162,8 +162,22 @@ def report_command(
     if telegram:
         from src.report import telegram as tg
 
-        sent = tg.send_daily_summary(run_date)
-        typer.echo("telegram: sent" if sent else "telegram: not configured, skipped")
+        if not tg.is_configured():
+            typer.echo("telegram: not configured, skipped")
+            return
+        if tg.send_daily_summary(run_date):
+            typer.echo("telegram: sent")
+            return
+        # Configured and still not delivered: a wrong token, a chat the bot was
+        # never messaged from, or Telegram being down. Printing "skipped" here
+        # would read as a setup gap when it is a delivery failure. Exit non-zero
+        # so the workflow step shows failed; it runs with continue-on-error, so
+        # the screen job itself stays green.
+        typer.echo(
+            "telegram: configured but NOT delivered -- see the telegram_send_* warning",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command("publish")
