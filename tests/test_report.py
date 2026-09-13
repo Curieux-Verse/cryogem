@@ -288,16 +288,20 @@ class TestPublish:
                 parse_constant=lambda c: pytest.fail(f"{name} contains non-JSON {c}"),
             )
 
+    # The fake tokens below are split into adjacent literals ("github_" "pat_...")
+    # that Python joins at compile time. Written whole, they tripped ci.yml's
+    # secrets-scan on every push from Phase 9 on, and a scan that is always red
+    # is one nobody reads -- so a REAL committed token would have gone unnoticed.
     def test_a_secret_shaped_string_refuses_to_publish(self, db, tmp_path):
         """The CI grep runs on the built bundle, by which point the value is
         already in a commit -- and the repo is public, so that is permanent."""
-        leaky = {"note": "Authorization: Bearer github_pat_11ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"}
+        leaky = {"note": "Authorization: Bearer github_" "pat_11ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"}
         with pytest.raises(publish.SecretLeak):
             publish._write(tmp_path, "leak.json", leaky)
         assert not (tmp_path / "leak.json").exists()
 
     def test_secret_value_is_not_echoed_in_the_error(self, db, tmp_path):
-        token = "github_pat_11ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+        token = "github_" "pat_11ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
         with pytest.raises(publish.SecretLeak) as exc:
             publish._write(tmp_path, "leak.json", {"t": token})
         # An exception message lands in the Actions log, which is public.
