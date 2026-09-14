@@ -122,3 +122,81 @@ jobs:
           path: logs/
           retention-days: 14
           if-no-files-found: ignore
+
+  # Holders and unlocks: the supply tier (D-040, D-045).
+  #
+  # A JOB IN THIS WORKFLOW, not a workflow of its own chained by workflow_run.
+  # GitHub runs at most three workflow_run levels after a dispatched workflow,
+  # and collect-daily -> screen -> publish -> build-site already uses all three.
+  # A fourth link would not error: build-site would simply never run, and the
+  # dashboard would sit on stale data looking fine.
+  #
+  # needs: collect -- the holder and contract collectors read the newest
+  # universe_snapshot and market_snapshot, which the collect job has just
+  # written. Run before it, a token that entered the universe today would have
+  # no reading and fail L1_HOLDER_CONC on its first day.
+  #
+  # continue-on-error -- a failed or timed-out supply run must not stop the
+  # screen. Yesterday's readings still count (D-042), and a second missed day
+  # switches the check off loudly (D-007) rather than screening on stale data.
+  # The failure stays visible: a red job, and no HEALTHCHECK_SUPPLY ping.
+  #
+  # Keep these steps in step with collect-supply.yml, the manual path.
+  supply:
+    needs: collect
+    if: (inputs.tier || 'daily') == 'daily'
+    continue-on-error: true
+    concurrency:
+      group: collect-supply
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    # ~27 min of GoPlus reads a day (D-044); a cold start adds ~370 DefiLlama
+    # protocols. A timeout loses the run's holder data, so the budget is generous.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Creates the supply tables on first run and adds any column a later
+      # release introduced. Idempotent, and additive only.
+      - name: Apply schema
+        run: python -m src.cli init-db
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Collect supply
+        run: python -m src.cli collect supply
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      # Guarded in the shell, not in `if:` (D-033). On success only: the missed
+      # ping is how a failed supply run is seen, since continue-on-error keeps
+      # the workflow itself green.
+      - name: Healthcheck ping
+        if: success()
+        env:
+          HC: ${{ secrets.HEALTHCHECK_SUPPLY }}
+        run: |
+          if [ -z "$HC" ]; then
+            echo "::notice::HEALTHCHECK_SUPPLY is unset; skipping healthcheck ping"
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collect-supply-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 14
+          if-no-files-found: ignore

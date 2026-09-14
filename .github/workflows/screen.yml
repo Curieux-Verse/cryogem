@@ -3,7 +3,9 @@
 # phone-sized summary to Telegram.
 #
 # Triggered by workflow_run rather than by cron, so it cannot run before the
-# data it needs exists. The `conclusion == 'success'` guard matters: without
+# data it needs exists. collect-daily concludes only after BOTH its jobs finish
+# -- market data, then holders and unlocks (D-045) -- so the screen always sees
+# that morning's holder readings, or yesterday's if the supply job failed. The `conclusion == 'success'` guard matters: without
 # it, a FAILED collection would still produce a screen, silently built on
 # yesterday's prices, and a confident dashboard on stale data is the worst
 # possible output of this system.
