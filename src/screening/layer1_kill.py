@@ -164,14 +164,29 @@ class AssetSnapshot:
     # -- supply / holders -----------------------------------------------------
     top10_holder_share: float | None = None
     holder_data_quality: str | None = None
+    #: measured | native_coin | unsupported_chain, from asset_contract. None
+    #: means no holder row at all -- an unmeasured asset, not a native one.
+    holder_applicability: str | None = None
     # -- events ---------------------------------------------------------------
     days_to_next_major_unlock: int | None = None
     next_unlock_pct_circulating: float | None = None
     next_unlock_recipient_type: str | None = None
     has_event_data: bool = False
+    #: True only when an unlock SCHEDULE is on file. An asset whose only event
+    #: is a listing has event data and still nothing to say about its next
+    #: cliff -- see check_unlock.
+    has_unlock_record: bool = False
     # -- liquidations ---------------------------------------------------------
     liquidations_24h_usd: float | None = None
     market_cap_change_24h_usd: float | None = None
+
+    @property
+    def holder_check_resolvable(self) -> bool:
+        # Whether L1_HOLDER_CONC can reach a verdict: measured, or not
+        # applicable. This is the input to source coverage (D-007), so the
+        # native coins in the universe do not read as missing data and drag
+        # coverage under the floor that switches the whole check off.
+        return self.top10_holder_share is not None or self.holder_applicability == "native_coin"
 
 
 class Layer1Screener:
@@ -190,7 +205,25 @@ class Layer1Screener:
     # -- the nine checks -----------------------------------------------------
     def check_holder_concentration(self, a: AssetSnapshot) -> CheckResult:
         threshold = self.t.top10_holder_share_fail
+        if a.holder_applicability == "native_coin":
+            # D-035. A chain's own coin has no token contract to read holders
+            # from. That is not missing data about the asset -- the check does
+            # not apply -- and failing it would disqualify BTC, ETH and SOL for
+            # being native.
+            return CheckResult(
+                "L1_HOLDER_CONC",
+                True,
+                None,
+                threshold,
+                "not applicable: a chain's native coin has no token contract to read holders from",
+            )
         if a.top10_holder_share is None:
+            if a.holder_applicability == "unsupported_chain":
+                return self._unknown(
+                    "L1_HOLDER_CONC",
+                    threshold,
+                    "the token's origin chain is not covered by any holder source",
+                )
             return self._unknown("L1_HOLDER_CONC", threshold, "holder data unavailable")
         passed = a.top10_holder_share <= threshold
         return CheckResult(
@@ -301,8 +334,25 @@ class Layer1Screener:
         distinction the data actually supports.
         """
         threshold = self.t.unlock_pct_circulating_fail
-        if not a.has_event_data:
-            return self._unknown("L1_UNLOCK", threshold, "no unlock data for this asset")
+        # has_unlock_record, NOT has_event_data. An asset whose only event on
+        # file is a listing has event data but no vesting schedule, and the
+        # branches below would pass it as "no major unlock scheduled ahead" --
+        # ignorance reported as a clean schedule. D-022 fixed this in Layer 2;
+        # it survived here until 2026-09-13 (D-038).
+        #
+        # And no schedule on file is NOT a failure (D-041, the user's call).
+        # DefiLlama covers ~23% of the universe; failing the other 77% for an
+        # adapter nobody wrote would let one data source decide the whole
+        # screen. The asset passes, and the reason says it was not assessed --
+        # never "no major unlock scheduled ahead", which only a schedule can say.
+        if not a.has_unlock_record:
+            return CheckResult(
+                "L1_UNLOCK",
+                True,
+                None,
+                threshold,
+                "not assessed: no unlock schedule on file for this asset",
+            )
         if a.days_to_next_major_unlock is None:
             return CheckResult(
                 "L1_UNLOCK", True, None, threshold, "no major unlock scheduled ahead"

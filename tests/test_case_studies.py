@@ -48,7 +48,7 @@ def rave_snapshot(days_before_peak: int) -> AssetSnapshot:
         has_spot_pair=False,
         contract_age_days=120,          # deliberately OLD, so age cannot carry the test
         top10_holder_share=0.95,
-        has_event_data=True,
+        has_event_data=True, has_unlock_record=True,
         days_to_next_major_unlock=400,  # deliberately far, so unlock cannot carry it
     )
 
@@ -85,7 +85,7 @@ def test_rave_liquidation_ratio_is_the_signature(screener):
         top10_holder_share=0.95,
         has_spot_pair=False,
         contract_age_days=120,
-        has_event_data=True,
+        has_event_data=True, has_unlock_record=True,
         days_to_next_major_unlock=400,
     )
     result = screener.run(collapse, "2026-04-18")
@@ -126,7 +126,7 @@ def trb_snapshot(price: float) -> AssetSnapshot:
         has_spot_pair=True,
         contract_age_days=800,          # long-listed, so age cannot carry the test
         top10_holder_share=0.95,
-        has_event_data=True,
+        has_event_data=True, has_unlock_record=True,
         days_to_next_major_unlock=None,
     )
 
@@ -188,7 +188,7 @@ def vvv_snapshot(top10_holder_share: float | None) -> AssetSnapshot:
         has_spot_pair=True,
         contract_age_days=200,
         top10_holder_share=top10_holder_share,
-        has_event_data=True,
+        has_event_data=True, has_unlock_record=True,
         days_to_next_major_unlock=None,  # emissions falling, no cliff ahead
     )
 
@@ -243,7 +243,7 @@ def _baseline(**overrides) -> AssetSnapshot:
         has_spot_pair=True,
         contract_age_days=400,
         top10_holder_share=0.25,
-        has_event_data=True,
+        has_event_data=True, has_unlock_record=True,
         days_to_next_major_unlock=None,
     )
     base.update(overrides)

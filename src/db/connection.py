@@ -33,6 +33,37 @@ from src.config import get_config
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
+#: Columns added after a table first shipped.
+#:
+#: `CREATE TABLE IF NOT EXISTS` never alters a table that already exists, so a
+#: column added to schema.sql reaches a fresh database and silently never
+#: reaches the local sqlite file or the Turso database already in production.
+#: The first write naming the new column then fails at 3am. Each entry here is
+#: added with ALTER TABLE when absent, which is idempotent and additive only --
+#: nothing is dropped, renamed or rewritten.
+ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "holder_snapshot": (
+        ("applicability", "TEXT"),
+        ("top10_share_raw", "REAL"),
+        ("top1_share", "REAL"),
+        ("excluded_share", "REAL"),
+        ("holders_json", "TEXT"),
+        ("source", "TEXT"),
+    ),
+    "scheduled_event": (
+        ("recipient_category", "TEXT"),
+        ("recipient_label", "TEXT"),
+        ("source_ref", "TEXT"),
+        ("retracted_utc", "TEXT"),
+    ),
+}
+
+#: Statements that depend on an ADDED column, so they must run after the
+#: columns exist. In schema.sql they would fail on an existing database.
+POST_MIGRATION_STATEMENTS: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_event_source_ref ON scheduled_event(source, source_ref)",
+)
+
 
 def _split_sql_statements(sql: str) -> list[str]:
     """Split a schema script into individual statements.
@@ -229,7 +260,34 @@ class Database:
                 continue
             self.execute(stmt)
             executed += 1
+        executed += self.ensure_columns()
         self.commit()
+        return executed
+
+    def ensure_columns(self) -> int:
+        """Add any ADDED_COLUMNS a table lacks, then the statements needing them.
+
+        Reads columns through `pragma_table_info` as a SELECT rather than a bare
+        PRAGMA, which apply_schema skips on libSQL.
+        """
+        executed = 0
+        for table, columns in ADDED_COLUMNS.items():
+            existing = {
+                row["name"]
+                for row in self.query("SELECT name FROM pragma_table_info(?)", (table,))
+            }
+            if not existing:
+                # The table does not exist yet. apply_schema creates it with
+                # every column already present, so there is nothing to add.
+                continue
+            for name, sql_type in columns:
+                if name not in existing:
+                    self.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+                    executed += 1
+        if self.query("SELECT name FROM pragma_table_info('scheduled_event')"):
+            for stmt in POST_MIGRATION_STATEMENTS:
+                self.execute(stmt)
+                executed += 1
         return executed
 
     def table_names(self) -> list[str]:
@@ -283,8 +341,37 @@ def open_database() -> Database:
     url = cfg.secrets.turso_database_url or os.getenv("TURSO_DATABASE_URL")
     if url:
         token = cfg.secrets.turso_auth_token or os.getenv("TURSO_AUTH_TOKEN")
-        return _open_libsql(url, token)
-    return _open_sqlite()
+        db = _open_libsql(url, token)
+        identity = f"libsql:{url}"
+    else:
+        db = _open_sqlite()
+        identity = f"sqlite:{_sqlite_path()}"
+    _ensure_columns_once(db, identity)
+    return db
+
+
+#: Databases already migrated by this process. Checked once per database, not
+#: per connection: get_db() opens a connection per call, and Turso meters reads.
+_COLUMNS_ENSURED: set[str] = set()
+
+
+def _ensure_columns_once(db: Database, identity: str) -> None:
+    # Every process that reads the database gets added columns before its first
+    # query, not only processes that happen to run init-db. screen.yml never
+    # runs init-db, and a column the screen reads that only collect-supply
+    # would have added is a "no such column" in the job that publishes the
+    # dashboard.
+    if identity in _COLUMNS_ENSURED:
+        return
+    try:
+        if db.ensure_columns():
+            db.commit()
+    except Exception as exc:  # noqa: BLE001 - reported; the real query will say more
+        from src.logging_setup import get_logger
+
+        get_logger("db").warning("ensure_columns_failed", error=str(exc)[:200])
+        return
+    _COLUMNS_ENSURED.add(identity)
 
 
 @contextmanager

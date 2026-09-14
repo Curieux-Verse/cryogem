@@ -1,0 +1,92 @@
+[
+ {
+  "id": "aave",
+  "symbol": "aave",
+  "name": "Aave",
+  "platforms": {
+   "ethereum": "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9",
+   "solana": "AavE1kKKnesPw4MuRJmJ9jZs9QzEE8CPxQ3ViczUDfc1",
+   "base": "0x63706e401c06ac8513145b7687a14804d17f814b",
+   "hydration": "asset_registry%2F1000624",
+   "harmony-shard-0": "0xcf323aad9e522b93f11c352caa519ad0e14eb40f",
+   "huobi-token": "0x202b4936fe1a82a4965220860ae46d7d3939bb25",
+   "fantom": "0x6a07a792ab2965c72a5b8088d3a069a7ac3a993b",
+   "near-protocol": "7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9.factory.bridge.near",
+   "energi": "0xa7f2f790355e0c32cab03f92f6eb7f488e6f049a",
+   "sora": "0x0091bd8d8295b25cab5a7b8b0e44498e678cfc15d872ede3215f7d4c7635ba36",
+   "polygon-pos": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
+   "binance-smart-chain": "0xfb6115445bff7b52feb98650c87f44907e58f802",
+   "arbitrum-one": "0xba5ddd1f9d7f570dc94a51479a000e3bce967196",
+   "optimistic-ethereum": "0x76fb31fb4af56892a25e32cfc43de717950c9278",
+   "avalanche": "0x63a72806098bd3d9520cc43356dd78afe5d386d9"
+  }
+ },
+ {
+  "id": "pancakeswap-token",
+  "symbol": "cake",
+  "name": "PancakeSwap",
+  "platforms": {
+   "binance-smart-chain": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+   "ethereum": "0x152649ea73beab28c5b49b26eb48f7ead6d4c898",
+   "polygon-zkevm": "0x0d1e753a25ebda689453309112904807625befbe",
+   "opbnb": "0x2779106e4f4a8a28d77a24c18283651a2ae22d1c",
+   "base": "0x3055913c90fcc1a6ce9a358911721eeb942013a1",
+   "solana": "4qQeZ5LwSz6HuupUu8jCtgXyW1mYQcNbFAW1sWZp89HL",
+   "arbitrum-one": "0x1b896893dfc86bb67cf57767298b9073d2c1ba2c",
+   "aptos": "0x159df6b7689437016108a019fd5bef736bac692b6d4a1f10c941f6fbb9a74ca6::oft::CakeOFT",
+   "linea": "0x0d1e753a25ebda689453309112904807625befbe",
+   "zksync": "0x3a287a06c66f9e95a56327185ca2bdf5f031cecd"
+  }
+ },
+ {
+  "id": "aerodrome-finance",
+  "symbol": "aero",
+  "name": "Aerodrome Finance",
+  "platforms": {
+   "base": "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
+  }
+ },
+ {
+  "id": "jupiter-exchange-solana",
+  "symbol": "jup",
+  "name": "Jupiter",
+  "platforms": {
+   "solana": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+   "unichain": "0xbe51a5e8fa434f09663e8fb4cce79d0b2381afad"
+  }
+ },
+ {
+  "id": "bitcoin",
+  "symbol": "btc",
+  "name": "Bitcoin",
+  "platforms": {}
+ },
+ {
+  "id": "ethereum",
+  "symbol": "eth",
+  "name": "Ethereum",
+  "platforms": {}
+ },
+ {
+  "id": "solana",
+  "symbol": "sol",
+  "name": "Solana",
+  "platforms": {}
+ },
+ {
+  "id": "binancecoin",
+  "symbol": "bnb",
+  "name": "BNB",
+  "platforms": {
+   "ethereum": "0xb8c77482e45f1f44de1745f52c74426c631bdd52"
+  }
+ },
+ {
+  "id": "1rus-btc25",
+  "symbol": "@btc25",
+  "name": "@BTC25",
+  "platforms": {
+   "the-open-network": "EQC7rnHHtMVBKyhiGnAbtYIlzGxS0dfi3ZbHExFX0LYi9cAH"
+  }
+ }
+]

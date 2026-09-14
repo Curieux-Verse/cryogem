@@ -29,7 +29,7 @@ from src.db.writes import json_dump, upsert
 from src.events.features import compute_all
 from src.logging_setup import get_logger
 from src.screening.layer1_kill import AssetSnapshot, Layer1Result, Layer1Screener
-from src.timeutil import age_hours, today_utc, utc_now_iso
+from src.timeutil import add_days, age_hours, today_utc, utc_now_iso
 
 log = get_logger("screening.pipeline")
 
@@ -37,8 +37,10 @@ log = get_logger("screening.pipeline")
 #: needs. L1_NO_MCAP is absent deliberately: it IS the availability check, and
 #: disabling it when market data is missing would defeat its purpose.
 COVERAGE_INPUTS: dict[str, str] = {
-    "L1_HOLDER_CONC": "top10_holder_share",
-    "L1_UNLOCK": "has_event_data",
+    # A native coin counts: its holder check resolves to not-applicable.
+    "L1_HOLDER_CONC": "holder_check_resolvable",
+    # A listing on file is not an unlock schedule (D-038).
+    "L1_UNLOCK": "has_unlock_record",
     "L1_MCAP_LIQ": "liquidations_24h_usd",
     "L1_PERP_SPOT": "has_spot_pair",
     "L1_OI_MCAP": "open_interest_usd",
@@ -89,6 +91,7 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
     market = _index_by_asset(db, "market_snapshot", run_date)
     spot = _index_by_asset(db, "spot_snapshot", run_date, key="base_asset")
     liquidations = _index_by_asset(db, "liquidation_snapshot", run_date, key="base_asset")
+    holders = _latest_holders(db, run_date)
     derivatives = _latest_derivatives(db, run_date)
     assets = sorted({row["base_asset"] for row in universe})
     events = compute_all(db, assets, run_date)
@@ -101,6 +104,7 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
         s = spot.get(asset, {})
         liq = liquidations.get(asset, {})
         ev = events.get(asset)
+        h = holders.get(asset, {})
 
         market_cap = m.get("market_cap_usd")
         change_pct = m.get("price_change_24h_pct")
@@ -122,17 +126,36 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
                 spot_volume_24h_usd=s.get("volume_24h_usd"),
                 has_spot_pair=bool(s),
                 contract_age_days=_age_days(row.get("onboard_date"), run_date),
-                top10_holder_share=None,  # no free holder source yet -- see R1
-                holder_data_quality="unavailable",
+                top10_holder_share=h.get("top10_share"),
+                holder_data_quality=h.get("data_quality") or "unavailable",
+                holder_applicability=h.get("applicability"),
                 days_to_next_major_unlock=ev.days_to_next_major_unlock if ev else None,
                 next_unlock_pct_circulating=ev.next_unlock_pct_circulating if ev else None,
                 next_unlock_recipient_type=ev.next_unlock_recipient_type if ev else None,
                 has_event_data=bool(ev and ev.has_event_data),
+                has_unlock_record=bool(ev and ev.has_unlock_record),
                 liquidations_24h_usd=liq.get("liq_total_usd_24h"),
                 market_cap_change_24h_usd=mcap_change,
             )
         )
     return snapshots
+
+
+def _latest_holders(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
+    # Holder snapshots refresh in rolling batches on their own workflow, so the
+    # newest date in the table covers only the latest batch. Read the newest
+    # row PER ASSET inside the allowed age instead; older than that, the asset
+    # is unmeasured rather than judged on a stale reading.
+    max_age = get_config().thresholds.layer1.holder_snapshot_max_age_days
+    rows = db.query(
+        "SELECT h.* FROM holder_snapshot h "
+        "JOIN (SELECT base_asset, MAX(snapshot_date) AS latest FROM holder_snapshot "
+        "      WHERE snapshot_date <= ? AND snapshot_date >= ? AND applicability IS NOT NULL "
+        "      GROUP BY base_asset) newest "
+        "ON newest.base_asset = h.base_asset AND newest.latest = h.snapshot_date",
+        (run_date, add_days(run_date, -max_age)),
+    )
+    return {row["base_asset"]: row for row in rows}
 
 
 def _index_by_asset(

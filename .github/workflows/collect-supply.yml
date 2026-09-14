@@ -1,0 +1,83 @@
+# =============================================================================
+# WHY: the supply tier -- holder concentration (R1) and the unlock calendar (R4).
+#
+# Separate from collect-daily on purpose. These sources are free but slow:
+# GoPlus answers one contract per call at ~25/min, CoinGecko's origin lookups
+# are 10/min, and DefiLlama serves 0.1-2.5 MB per protocol. Inside
+# collect-daily they would push a 20-minute job past its timeout and take the
+# price and derivatives snapshots down with them.
+#
+# Every collector here refreshes in bounded batches and keeps what it already
+# has, so a run cut short loses progress, never data. Holder readings count
+# for one day only (layer1.holder_snapshot_max_age_days, D-042), so this must
+# run DAILY, after collect-daily has written the day's market data.
+#
+# workflow_dispatch ONLY, like every workflow here. No `on: schedule` -- see the
+# header of collect-daily.yml and the CI guard.
+# =============================================================================
+name: collect-supply
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: collect-supply
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    # Every run re-reads every measurable token (~32 min at GoPlus's free-tier
+    # pace, D-042). A cold start adds ~370 DefiLlama protocols and CoinGecko
+    # origin lookups on top. A timeout loses the whole run's holder data, so
+    # the budget is generous rather than tight.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Creates the supply tables on first run and adds any column a later
+      # release introduced. Idempotent, and additive only.
+      - name: Apply schema
+        run: python -m src.cli init-db
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Collect
+        run: python -m src.cli collect supply
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      # Guarded in the shell, not in `if:` -- a step's own env is not in scope
+      # for its own `if` expression (DECISIONS.md D-033).
+      - name: Healthcheck ping
+        if: success()
+        env:
+          HC: ${{ secrets.HEALTHCHECK_SUPPLY }}
+        run: |
+          if [ -z "$HC" ]; then
+            echo "::notice::HEALTHCHECK_SUPPLY is unset; skipping healthcheck ping"
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collect-supply-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 14
+          if-no-files-found: ignore

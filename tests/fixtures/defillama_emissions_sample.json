@@ -1,0 +1,182 @@
+{
+ "gecko_id": "ondo-finance",
+ "name": "Ondo Finance",
+ "categories": {
+  "publicSale": [
+   "Community Access Sale"
+  ],
+  "noncirculating": [
+   "Ecosystem Growth"
+  ],
+  "privateSale": [
+   "Private Sales"
+  ],
+  "insiders": [
+   "Protocol Development"
+  ]
+ },
+ "metadata": {
+  "token": "ethereum:0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3",
+  "chain": null,
+  "unlockEvents": [
+   {
+    "timestamp": 1705536000,
+    "cliffAllocations": [
+     {
+      "recipient": "Community Access Sale",
+      "category": "publicSale",
+      "unlockType": "cliff",
+      "amount": 178959699
+     },
+     {
+      "recipient": "Ecosystem Growth",
+      "category": "noncirculating",
+      "unlockType": "cliff",
+      "amount": 1250608690.8
+     },
+     {
+      "recipient": "Ecosystem Growth",
+      "category": "noncirculating",
+      "unlockType": "cliff",
+      "amount": 792052170.8399999
+     },
+     {
+      "recipient": "Protocol Development",
+      "category": "insiders",
+      "unlockType": "cliff",
+      "amount": 660000000
+     },
+     {
+      "recipient": "Private Sales",
+      "category": "privateSale",
+      "unlockType": "cliff",
+      "amount": 258049208.8
+     }
+    ],
+    "linearAllocations": [
+     {
+      "recipient": "Community Access Sale",
+      "category": "publicSale",
+      "unlockType": "linear_start",
+      "previousRatePerWeek": 0,
+      "newRatePerWeek": 381900,
+      "endTimestamp": 1737092916
+     }
+    ],
+    "summary": {
+     "totalTokensCliff": 3139669769.44,
+     "netChangeInWeeklyRate": 381900,
+     "totalNewWeeklyRate": 381900
+    }
+   },
+   {
+    "timestamp": 1737092916,
+    "cliffAllocations": [
+     {
+      "recipient": "Ecosystem Growth",
+      "category": "noncirculating",
+      "unlockType": "cliff",
+      "amount": 792052170.8399999
+     },
+     {
+      "recipient": "Protocol Development",
+      "category": "insiders",
+      "unlockType": "cliff",
+      "amount": 660000000
+     },
+     {
+      "recipient": "Private Sales",
+      "category": "privateSale",
+      "unlockType": "cliff",
+      "amount": 258049208.8
+     }
+    ],
+    "linearAllocations": [],
+    "summary": {
+     "totalTokensCliff": 1710101379.6399999
+    }
+   },
+   {
+    "timestamp": 1768649832,
+    "cliffAllocations": [
+     {
+      "recipient": "Ecosystem Growth",
+      "category": "noncirculating",
+      "unlockType": "cliff",
+      "amount": 792052170.8399999
+     },
+     {
+      "recipient": "Protocol Development",
+      "category": "insiders",
+      "unlockType": "cliff",
+      "amount": 660000000
+     },
+     {
+      "recipient": "Private Sales",
+      "category": "privateSale",
+      "unlockType": "cliff",
+      "amount": 258049208.8
+     }
+    ],
+    "linearAllocations": [],
+    "summary": {
+     "totalTokensCliff": 1710101379.6399999
+    }
+   },
+   {
+    "timestamp": 1800206748,
+    "cliffAllocations": [
+     {
+      "recipient": "Ecosystem Growth",
+      "category": "noncirculating",
+      "unlockType": "cliff",
+      "amount": 792052170.8399999
+     },
+     {
+      "recipient": "Protocol Development",
+      "category": "insiders",
+      "unlockType": "cliff",
+      "amount": 660000000
+     },
+     {
+      "recipient": "Private Sales",
+      "category": "privateSale",
+      "unlockType": "cliff",
+      "amount": 258049208.8
+     }
+    ],
+    "linearAllocations": [],
+    "summary": {
+     "totalTokensCliff": 1710101379.6399999
+    }
+   },
+   {
+    "timestamp": 1831763664,
+    "cliffAllocations": [
+     {
+      "recipient": "Ecosystem Growth",
+      "category": "noncirculating",
+      "unlockType": "cliff",
+      "amount": 792052170.8399999
+     },
+     {
+      "recipient": "Protocol Development",
+      "category": "insiders",
+      "unlockType": "cliff",
+      "amount": 660000000
+     },
+     {
+      "recipient": "Private Sales",
+      "category": "privateSale",
+      "unlockType": "cliff",
+      "amount": 258049208.8
+     }
+    ],
+    "linearAllocations": [],
+    "summary": {
+     "totalTokensCliff": 1710101379.6399999
+    }
+   }
+  ]
+ }
+}

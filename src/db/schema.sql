@@ -144,6 +144,15 @@ CREATE TABLE IF NOT EXISTS holder_snapshot (
     holder_count        INTEGER,
     excluded_addresses  TEXT,
     data_quality        TEXT,
+    -- measured | native_coin | unsupported_chain | fetch_failed. native_coin
+    -- is NOT a gap: a chain's own coin has no token contract to read holders
+    -- from, so the check does not apply. See DECISIONS.md D-035.
+    applicability       TEXT,
+    top10_share_raw     REAL,               -- before exclusions, kept for audit
+    top1_share          REAL,               -- single-whale risk, after exclusions
+    excluded_share      REAL,               -- share of supply removed by exclusions
+    holders_json        TEXT,               -- top holders with name + exclusion reason
+    source              TEXT,
     fetched_at_utc      TEXT NOT NULL,
     PRIMARY KEY (snapshot_date, base_asset)
 );
@@ -206,7 +215,13 @@ CREATE TABLE IF NOT EXISTS scheduled_event (
     source              TEXT NOT NULL,
     confidence          TEXT NOT NULL,
     first_seen_utc      TEXT NOT NULL,
-    fetched_at_utc      TEXT NOT NULL
+    fetched_at_utc      TEXT NOT NULL,
+    recipient_category  TEXT,               -- the source's raw label, e.g. DefiLlama 'insiders'
+    recipient_label     TEXT,               -- e.g. 'Core Contributors'
+    source_ref          TEXT,               -- the source's own id, e.g. a DefiLlama slug
+    -- Set when a later refresh no longer lists a FUTURE event. Never deleted:
+    -- a backtest on a date before this must still see what was then known.
+    retracted_utc       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_event_asset_date
     ON scheduled_event(base_asset, event_date_utc);
@@ -217,6 +232,49 @@ CREATE INDEX IF NOT EXISTS idx_event_first_seen
 --   unlock_cliff, unlock_linear, emissions_change, burn, mainnet, upgrade,
 --   governance_vote, listing, delisting, monitoring_tag_add,
 --   monitoring_tag_remove, conference, earnings_report
+
+-- =============================================================================
+-- ASSET CONTRACTS: which token contract, on which chain, holder data is read
+-- from -- or why there is none. Resolved from CoinGecko platforms, cached.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS asset_contract (
+    coingecko_id        TEXT PRIMARY KEY,
+    -- measurable | native_coin | unsupported_chain
+    applicability       TEXT NOT NULL,
+    platform            TEXT,               -- CoinGecko platform key of the chosen contract
+    goplus_chain        TEXT,               -- GoPlus chain id, or 'solana' / 'tron'
+    contract_address    TEXT,
+    -- single_platform | asset_platform_id | coins_list_first_platform |
+    -- native_coin_id | no_platforms | no_supported_platform
+    resolved_via        TEXT NOT NULL,
+    origin_platform     TEXT,               -- CoinGecko asset_platform_id, once confirmed
+    platforms_json      TEXT,               -- every platform -> address, for reverse lookup
+    fetched_at_utc      TEXT NOT NULL
+);
+
+-- Contract names from a block explorer. Names do not change, so this is a
+-- cache that saves re-asking for the same pool or escrow every refresh.
+CREATE TABLE IF NOT EXISTS address_label (
+    chain               TEXT NOT NULL,
+    address             TEXT NOT NULL,
+    name                TEXT,
+    implementation_name TEXT,
+    is_contract         INTEGER,
+    source              TEXT NOT NULL,
+    fetched_at_utc      TEXT NOT NULL,
+    PRIMARY KEY (chain, address)
+);
+
+-- DefiLlama emissions protocols and the CoinGecko id each one maps to.
+CREATE TABLE IF NOT EXISTS emission_protocol (
+    slug                TEXT PRIMARY KEY,
+    gecko_id            TEXT,
+    name                TEXT,
+    token               TEXT,
+    unlock_event_count  INTEGER,
+    last_fetched_utc    TEXT NOT NULL,
+    fetched_at_utc      TEXT NOT NULL
+);
 
 -- =============================================================================
 -- ATTENTION (Tier-2 news)

@@ -34,7 +34,9 @@ from src.collectors.announcements import BinanceAnnouncementCollector
 from src.collectors.attention import AttentionCollector, MarketRegimeCollector
 from src.collectors.coinalyze import CoinalyzeLiquidationCollector
 from src.collectors.coingecko import CoinGeckoCollector
+from src.collectors.contracts import AssetContractCollector
 from src.collectors.defillama import DefiLlamaCollector
+from src.collectors.holders import HolderCollector
 from src.collectors.hyperliquid import HyperliquidCollector
 from src.collectors.klines import BinanceKlinesCollector
 from src.collectors.news import NewsCollector
@@ -55,6 +57,8 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     "defillama": DefiLlamaCollector,
     "coinalyze_liquidations": CoinalyzeLiquidationCollector,
     "unlocks": UnlockCollector,
+    "asset_contracts": AssetContractCollector,
+    "holders": HolderCollector,
     "announcements": BinanceAnnouncementCollector,
     "attention": AttentionCollector,
     "market_regime": MarketRegimeCollector,
@@ -71,7 +75,6 @@ TIERS: dict[str, list[str]] = {
         "coingecko",
         "defillama",
         "coinalyze_liquidations",
-        "unlocks",
         "announcements",
         "attention",
         "market_regime",
@@ -87,6 +90,16 @@ TIERS: dict[str, list[str]] = {
         "hyperliquid",
         "announcements",
         "news",
+    ],
+    # Supply: holder concentration (R1) and the unlock calendar (R4). Slow,
+    # paced by free-tier limits, and refreshed in bounded batches, so it runs
+    # in its own workflow (collect-supply.yml) and never spends collect-daily's
+    # 20-minute budget. Order matters: holders read asset_contracts, and
+    # unlocks resolve DefiLlama token addresses through the same table.
+    "supply": [
+        "asset_contracts",
+        "holders",
+        "unlocks",
     ],
     # 5-minute. HOST ONLY -- never wire this to GitHub Actions.
     "fast": [

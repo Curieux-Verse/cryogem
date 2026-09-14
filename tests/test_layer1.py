@@ -28,6 +28,7 @@ def clean(**overrides) -> AssetSnapshot:
         contract_age_days=400,
         top10_holder_share=0.25,
         has_event_data=True,
+        has_unlock_record=True,
         days_to_next_major_unlock=None,
     )
     base.update(overrides)
@@ -102,9 +103,11 @@ class TestMissingDataFailsClosed:
         assert "L1_MCAP" in result.failed_checks
         assert "L1_NO_MCAP" in result.failed_checks
 
-    def test_no_event_data_fails_the_unlock_check(self, screener):
-        result = screener.run(clean(has_event_data=False), "2026-09-09")
-        assert "L1_UNLOCK" in result.failed_checks
+    def test_no_unlock_schedule_is_not_assessed_rather_than_failed(self, screener):
+        """D-041: unlock data covers ~23% of the universe; its absence is not a verdict."""
+        result = screener.run(clean(has_unlock_record=False), "2026-09-09")
+        assert "L1_UNLOCK" not in result.failed_checks
+        assert result.checks["L1_UNLOCK"].reason.startswith("not assessed")
 
 
 class TestSourceOutageIsDifferentFromAssetGap:
@@ -112,25 +115,25 @@ class TestSourceOutageIsDifferentFromAssetGap:
 
     def test_dark_check_does_not_contribute_to_the_verdict(self):
         screener = Layer1Screener(dark_checks=frozenset({"L1_UNLOCK"}))
-        result = screener.run(clean(has_event_data=False), "2026-09-09")
+        result = screener.run(clean(has_unlock_record=False), "2026-09-09")
         assert result.passed, "a dark check must not fail the asset"
 
     def test_dark_check_is_still_reported_never_hidden(self):
         screener = Layer1Screener(dark_checks=frozenset({"L1_UNLOCK"}))
-        result = screener.run(clean(has_event_data=False), "2026-09-09")
+        result = screener.run(clean(has_unlock_record=False), "2026-09-09")
         assert result.dark_checks == ["L1_UNLOCK"]
         assert result.checks["L1_UNLOCK"].source_unavailable is True
         assert "disabled" in result.checks["L1_UNLOCK"].reason
 
     def test_dark_check_is_excluded_from_failed_checks(self):
         screener = Layer1Screener(dark_checks=frozenset({"L1_UNLOCK"}))
-        result = screener.run(clean(has_event_data=False), "2026-09-09")
+        result = screener.run(clean(has_unlock_record=False), "2026-09-09")
         assert "L1_UNLOCK" not in result.failed_checks
 
     def test_other_checks_still_fail_normally_while_one_is_dark(self):
         screener = Layer1Screener(dark_checks=frozenset({"L1_UNLOCK"}))
         result = screener.run(
-            clean(has_event_data=False, top10_holder_share=0.99), "2026-09-09"
+            clean(has_unlock_record=False, top10_holder_share=0.99), "2026-09-09"
         )
         assert not result.passed
         assert result.failed_checks == ["L1_HOLDER_CONC"]

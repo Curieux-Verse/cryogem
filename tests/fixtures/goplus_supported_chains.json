@@ -1,0 +1,178 @@
+{
+ "code": 1,
+ "message": "OK",
+ "result": [
+  {
+   "name": "Ethereum",
+   "id": "1"
+  },
+  {
+   "name": "BSC",
+   "id": "56"
+  },
+  {
+   "name": "Arbitrum",
+   "id": "42161"
+  },
+  {
+   "name": "Polygon",
+   "id": "137"
+  },
+  {
+   "name": "opBNB",
+   "id": "204"
+  },
+  {
+   "name": "zkSync Era",
+   "id": "324"
+  },
+  {
+   "name": "Linea Mainnet",
+   "id": "59144"
+  },
+  {
+   "name": "Base",
+   "id": "8453"
+  },
+  {
+   "name": "Mantle",
+   "id": "5000"
+  },
+  {
+   "name": "Unichain",
+   "id": "130"
+  },
+  {
+   "name": "Zircuit Mainnet",
+   "id": "48900"
+  },
+  {
+   "name": "Scroll",
+   "id": "534352"
+  },
+  {
+   "name": "Optimism",
+   "id": "10"
+  },
+  {
+   "name": "Avalanche",
+   "id": "43114"
+  },
+  {
+   "name": "Cronos",
+   "id": "25"
+  },
+  {
+   "name": "Gnosis",
+   "id": "100"
+  },
+  {
+   "name": "Tron",
+   "id": "tron"
+  },
+  {
+   "name": "KCC",
+   "id": "321"
+  },
+  {
+   "name": "FON",
+   "id": "201022"
+  },
+  {
+   "name": "ZKFair",
+   "id": "42766"
+  },
+  {
+   "name": "Story",
+   "id": "1514"
+  },
+  {
+   "name": "Soneium",
+   "id": "1868"
+  },
+  {
+   "name": "Pharos Testnet",
+   "id": "688688"
+  },
+  {
+   "name": "Jovay",
+   "id": "5734951"
+  },
+  {
+   "name": "Monad",
+   "id": "143"
+  },
+  {
+   "name": "Plasma",
+   "id": "9745"
+  },
+  {
+   "name": "Pharos Mainnet",
+   "id": "1672"
+  },
+  {
+   "name": "Conflux eSpace",
+   "id": "1030"
+  },
+  {
+   "name": "Robinhood",
+   "id": "4663"
+  },
+  {
+   "name": "Stable",
+   "id": "988"
+  },
+  {
+   "name": "Sonic",
+   "id": "146"
+  },
+  {
+   "name": "Abstract",
+   "id": "2741"
+  },
+  {
+   "name": "HashKey Chain",
+   "id": "177"
+  },
+  {
+   "name": "Berachain",
+   "id": "80094"
+  },
+  {
+   "name": "World Chain",
+   "id": "480"
+  },
+  {
+   "name": "Morph",
+   "id": "2818"
+  },
+  {
+   "name": "Gravity",
+   "id": "1625"
+  },
+  {
+   "name": "X Layer Mainnet",
+   "id": "196"
+  },
+  {
+   "name": "zkLink Nova",
+   "id": "810180"
+  },
+  {
+   "name": "Bitlayer Mainnet",
+   "id": "200901"
+  },
+  {
+   "name": "Merlin",
+   "id": "4200"
+  },
+  {
+   "name": "Manta Pacific",
+   "id": "169"
+  },
+  {
+   "name": "Blast",
+   "id": "81457"
+  }
+ ]
+}

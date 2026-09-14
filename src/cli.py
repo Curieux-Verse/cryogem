@@ -50,7 +50,7 @@ def init_db_command() -> None:
 def collect_command(
     name: str = typer.Argument(
         ...,
-        help="Collector name, a tier ('daily'/'hourly'/'fast'), or 'all'.",
+        help="Collector name, a tier ('daily'/'hourly'/'supply'/'fast'), or 'all'.",
     ),
     as_of: Optional[str] = typer.Option(
         None, "--as-of", help="Logical snapshot date YYYY-MM-DD. Defaults to today (UTC)."

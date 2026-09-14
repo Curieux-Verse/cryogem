@@ -38,6 +38,10 @@ endpoints:
   lunarcrush: "https://lunarcrush.com/api4/public"
   alternative_me: "https://api.alternative.me/fng/"
   binance_announcements: "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query"
+  # R1. Keyless. One contract per call (a comma list returns one result).
+  goplus: "https://api.gopluslabs.io/api/v1"
+  # R4. Keyless public datasets host. NOT api.llama.fi/emission/*, which is 402.
+  defillama_datasets: "https://defillama-datasets.llama.fi"
 
 rate_limits:
   # requests per minute
@@ -49,6 +53,15 @@ rate_limits:
   coinalyze: 40          # documented hard cap
   cryptopanic: 60
   lunarcrush: 60
+  goplus: 25             # spaced, see rate_limit_spacing. Documented 30/min, but the keyless ceiling
+                         # is lower; a refused call costs nothing but its slot (2026-09-14 probes)
+  blockscout: 120        # TUNE_ME: public instances, no key
+  defillama_datasets: 60
+
+# Sources paced one call every 60/rate seconds instead of bursting the minute's
+# budget up front. GoPlus answers a burst with code 4029 (2026-09-14 probe).
+rate_limit_spacing:
+  - goplus
 
 logging:
   level: "INFO"
@@ -59,3 +72,96 @@ reporting:
   output_dir: "reports"
   public_json_dir: "data/public"
   history_window_days: 90
+
+# ------------------------------------------------------------------------------
+# HOLDERS (R1). Which contract to read is resolved in asset_contract; this block
+# governs how the read is paced and what counts as concentration.
+# ------------------------------------------------------------------------------
+holders:
+  # Every measurable token, every run -- never capped (D-042). 315 tokens took
+  # 26.5 min on 2026-09-14 (~12 keyless reads/min, D-044). Keep this above
+  # the measurable universe; it is a safety bound, not a rotation.
+  max_tokens_per_run: 400
+  # Block-explorer name lookups for contract holders. Cached forever after.
+  max_name_lookups_per_run: 1500
+  # GoPlus rate limiting arrives as HTTP 200 with code 4029 in the body, which an
+  # HTTP-status retry never sees. Retries, and the first wait (doubling each time).
+  # Short and many: a long wait was most of the run time (48 waits of 15-60s),
+  # and GoPlus does not penalise a refused call. 3+6+..+96 = 189s worst case.
+  goplus_rate_limit_retries: 6
+  goplus_rate_limit_backoff_seconds: 3
+  # Chains CoinGecko lists without an EVM chain id, that GoPlus still serves.
+  non_evm_goplus_ids:
+    solana: "solana"
+    tron: "tron"
+  # Verified live 2026-09-13 (optimism, scroll and gnosis answer via redirect).
+  blockscout_hosts:
+    ethereum: "eth.blockscout.com"
+    base: "base.blockscout.com"
+    arbitrum-one: "arbitrum.blockscout.com"
+    polygon-pos: "polygon.blockscout.com"
+    zksync: "zksync.blockscout.com"
+    optimistic-ethereum: "optimism.blockscout.com"
+    scroll: "scroll.blockscout.com"
+    xdai: "gnosis.blockscout.com"
+  # Matched against the contract's implementation name, then its own name.
+  # A match means the balance is not one party's to sell: user deposits in a
+  # pool or lending market, tokens escrowed or staked by many holders, bridged
+  # supply, or locked vesting. A multisig (Safe) and a treasury or reserve are
+  # deliberately NOT here -- those ARE one party, and are the RAVE pattern.
+  exclude_contract_name_patterns:
+    - "votingescrow"
+    - "escrow"
+    - "stake"
+    - "vesting"
+    - "vester"
+    - "timelock"
+    - "locker"
+    - "tokenlock"
+    - "bridge"
+    - "gateway"
+    - "portal"
+    - "predicate"
+    - "pair"
+    - "pool"
+    - "vault"
+    - "router"
+    - "atoken"
+    - "ctoken"
+    - "comet"
+    - "distributor"
+    - "gauge"
+    - "masterchef"
+  excluded_addresses_file: "config/excluded_addresses.yaml"
+
+contracts:
+  # CoinGecko /coins/{id} lookups confirming the origin chain of a multi-chain
+  # token. 10/min on the free tier, so bounded; the rest wait for the next run.
+  max_origin_lookups_per_run: 60
+
+# ------------------------------------------------------------------------------
+# UNLOCKS (R4). DefiLlama's datasets host serves the computed output of its
+# emissions adapters. The adapters repo itself is no longer public (D-037).
+# ------------------------------------------------------------------------------
+unlocks:
+  max_protocol_fetches_per_run: 400   # ~372 protocols, 0.1-2.5 MB each
+  refresh_days: 7
+  remap_days: 30
+  history_days: 730
+  category_map:
+    insiders: "team"
+    privateSale: "investor"
+    publicSale: "community"
+    airdrop: "community"
+    farming: "community"
+    staking: "community"
+    liquidity: "community"
+    ecosystem: "ecosystem"
+    # Foundation and community reserves (Aptos, Ondo). Treated as ecosystem,
+    # which never fails L1 -- agreed 2026-09-13, see D-037.
+    noncirculating: "ecosystem"
+    community: "community"
+    # Seen once in the first live run (2026-09-13), with no further meaning in
+    # the payload. Stored unlabelled rather than guessed.
+    other: null
+    Uncategorized: null

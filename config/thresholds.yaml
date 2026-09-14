@@ -51,6 +51,13 @@ layer1:
   # TUNE_ME.
   min_source_coverage: 0.20
 
+  # D-042, the user's call: holder data must be as fresh as the prices it is
+  # screened beside. collect-supply re-reads every measurable token on every
+  # run, daily. A reading from today or yesterday is a measurement; anything
+  # older is not. A missed run turns the check dark the next day (coverage
+  # floor, D-007) -- loudly -- rather than screening on stale holders.
+  holder_snapshot_max_age_days: 1
+
 # Weights sum to 110 DELIBERATELY — normalise to 100 after computing.
 # If a block is unavailable for an asset, renormalise over the remaining blocks.
 layer2_weights:

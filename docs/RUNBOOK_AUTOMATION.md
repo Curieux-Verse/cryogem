@@ -77,6 +77,7 @@ Settings → Secrets and variables → Actions → New repository secret.
 | `HEALTHCHECK_HOURLY` | recommended | separate check |
 | `HEALTHCHECK_JOURNAL` | recommended | separate check |
 | `HEALTHCHECK_SCREEN` | recommended | separate check |
+| `HEALTHCHECK_SUPPLY` | recommended | separate check, for `collect-supply` |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | no | notification only |
 
 ---
@@ -178,6 +179,14 @@ is exactly where a silent chain break would show up.
 | collect-hourly | `HEALTHCHECK_HOURLY` | 90 minutes | 30 minutes |
 | journal | `HEALTHCHECK_JOURNAL` | **25 hours** | 1 hour |
 | screen | `HEALTHCHECK_SCREEN` | **25 hours** | 1 hour |
+| collect-supply | `HEALTHCHECK_SUPPLY` | **25 hours** -- it must run daily (D-042) | 1 hour |
+
+`collect-supply` (holders and unlocks, D-040) is dispatched on its own, like the
+collectors: at 04:10 UTC, after `collect-daily` has written the day's market data it
+reads. It must run **daily**: a holder reading counts for one day only (D-042), so a
+skipped day switches L1_HOLDER_CONC off the next morning. Every run re-reads every
+measurable token (~32 min at GoPlus's free-tier pace); the first run also maps ~370
+DefiLlama protocols.
 
 **The daily periods are 25 hours, not 24**, so runner-provisioning drift does
 not cry wolf while a real one-day gap still alerts.

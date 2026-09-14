@@ -94,6 +94,7 @@ class Layer1Thresholds(BaseModel):
     orphan_perp_fails: bool
     require_mcap_data: bool
     min_source_coverage: float
+    holder_snapshot_max_age_days: int
 
     @model_validator(mode="after")
     def _sanity(self) -> "Layer1Thresholds":
@@ -245,6 +246,47 @@ class ReportingSettings(BaseModel):
     history_window_days: int
 
 
+# Top-holder concentration (L1_HOLDER_CONC). See DECISIONS.md D-035 and D-036.
+class HolderSettings(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    max_tokens_per_run: int
+    max_name_lookups_per_run: int
+    # GoPlus returns rate limiting as HTTP 200 with code 4029: how many times to
+    # retry, and the first wait in seconds (doubling each retry).
+    goplus_rate_limit_retries: int
+    goplus_rate_limit_backoff_seconds: float
+    # CoinGecko platform key -> GoPlus chain id, for chains with no EVM chain id.
+    non_evm_goplus_ids: dict[str, str]
+    # CoinGecko platform key -> Blockscout host, for contract-name lookups.
+    blockscout_hosts: dict[str, str]
+    # Lower-case substrings of a contract's (implementation) name that mark its
+    # balance as not-concentration: pools, escrows, stakes, bridges, vesting.
+    exclude_contract_name_patterns: list[str]
+    excluded_addresses_file: str
+
+
+class ContractSettings(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    max_origin_lookups_per_run: int
+
+
+# Unlock calendar from DefiLlama's public datasets host. See DECISIONS.md D-037.
+class UnlockSettings(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    max_protocol_fetches_per_run: int
+    # Re-fetch a protocol that maps to a screened asset after this many days.
+    refresh_days: int
+    # Re-check a protocol that maps to nothing we screen after this many days.
+    remap_days: int
+    # Past events older than this are not stored; they cannot move L1 or L2.
+    history_days: int
+    # DefiLlama category -> our recipient_type. null = stored unlabelled.
+    category_map: dict[str, str | None]
+
+
 class Settings(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -254,8 +296,14 @@ class Settings(BaseModel):
     http: HttpSettings
     endpoints: dict[str, str]
     rate_limits: dict[str, int]
+    # Sources whose calls are spread evenly (one every 60/rate seconds) instead
+    # of allowed to burst up to the per-minute budget at once.
+    rate_limit_spacing: list[str] = []
     logging: LoggingSettings
     reporting: ReportingSettings
+    holders: HolderSettings
+    contracts: ContractSettings
+    unlocks: UnlockSettings
 
 
 # ==============================================================================

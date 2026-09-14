@@ -1,0 +1,86 @@
+[
+ {
+  "id": "ethereum",
+  "chain_identifier": 1,
+  "name": "Ethereum",
+  "shortname": "Ethereum",
+  "native_coin_id": "ethereum",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/279/thumb/ethereum.png?1706606803",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/279/small/ethereum.png?1706606803",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/279/large/ethereum.png?1706606803"
+  }
+ },
+ {
+  "id": "binance-smart-chain",
+  "chain_identifier": 56,
+  "name": "BNB Smart Chain",
+  "shortname": "BSC",
+  "native_coin_id": "binancecoin",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/1/thumb/bnb_smart_chain.png?1706606721",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/1/small/bnb_smart_chain.png?1706606721",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/1/large/bnb_smart_chain.png?1706606721"
+  }
+ },
+ {
+  "id": "base",
+  "chain_identifier": 8453,
+  "name": "Base",
+  "shortname": "",
+  "native_coin_id": "ethereum",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/131/thumb/base.png?1759905869",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/131/small/base.png?1759905869",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/131/large/base.png?1759905869"
+  }
+ },
+ {
+  "id": "solana",
+  "chain_identifier": null,
+  "name": "Solana",
+  "shortname": "Solana",
+  "native_coin_id": "solana",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/5/thumb/solana.png?1706606708",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/5/small/solana.png?1706606708",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/5/large/solana.png?1706606708"
+  }
+ },
+ {
+  "id": "the-open-network",
+  "chain_identifier": null,
+  "name": "TON",
+  "shortname": "TON",
+  "native_coin_id": "the-open-network",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/142/thumb/tonblockchain.jpeg?1706606805",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/142/small/tonblockchain.jpeg?1706606805",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/142/large/tonblockchain.jpeg?1706606805"
+  }
+ },
+ {
+  "id": "arbitrum-one",
+  "chain_identifier": 42161,
+  "name": "Arbitrum One",
+  "shortname": "Arbitrum",
+  "native_coin_id": "ethereum",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/33/thumb/AO_logomark.png?1706606717",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/33/small/AO_logomark.png?1706606717",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/33/large/AO_logomark.png?1706606717"
+  }
+ },
+ {
+  "id": "polygon-pos",
+  "chain_identifier": 137,
+  "name": "Polygon POS",
+  "shortname": "Polygon",
+  "native_coin_id": "polygon-ecosystem-token",
+  "image": {
+   "thumb": "https://coin-images.coingecko.com/asset_platforms/images/15/thumb/polygon_pos.png?1706606645",
+   "small": "https://coin-images.coingecko.com/asset_platforms/images/15/small/polygon_pos.png?1706606645",
+   "large": "https://coin-images.coingecko.com/asset_platforms/images/15/large/polygon_pos.png?1706606645"
+  }
+ }
+]

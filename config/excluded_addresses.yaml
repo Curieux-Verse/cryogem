@@ -1,0 +1,184 @@
+# R5 -- addresses whose balance is NOT holder concentration.
+#
+# Most exclusions are decided automatically and recorded per holder in
+# holder_snapshot.holders_json, with the reason:
+#   * GoPlus is_locked = 1
+#   * a DEX pair GoPlus lists for the token
+#   * a contract whose name matches settings.holders.exclude_contract_name_patterns
+#
+# This file is for what those cannot see: burn addresses, and wallets that are
+# not contracts but still are not one owner -- exchange hot and cold wallets
+# above all. An exchange wallet holds many customers' tokens; counting it as
+# one holder inflates concentration for every liquid token.
+#
+# EVERY entry needs a label AND a source you actually checked. An unverified
+# row is a guess, and a wrong exclusion hides real concentration -- worse than
+# a false alarm, because nothing downstream will question it.
+#
+# To find candidates: holders_json lists each top holder with is_contract,
+# name and share. A non-contract wallet in the top 10 of many unrelated tokens
+# is almost always an exchange. Check it on the chain's explorer first.
+
+burn_addresses:
+  - "0x0000000000000000000000000000000000000000"
+  - "0x000000000000000000000000000000000000dead"
+
+# Keyed by GoPlus chain id: "1" Ethereum, "56" BSC, "8453" Base, "solana", ...
+# Verified 2026-09-14 by reading each address's public name tag on the chain's
+# explorer (the page title of `source`). Candidates came from holders_json: the
+# non-contract wallets appearing in the kept top 10 of 5+ unrelated tokens.
+# Candidates with NO public tag (e.g. 0xa9d1e08c..., 0x15da7556..., 0xb0a3a2b6...
+# on Ethereum) are deliberately absent -- an unlabelled wallet may be a whale.
+addresses:
+  "1":
+    - address: "0xf977814e90da44bfa03b6295a0616a897441acec"
+      category: cex
+      label: "Binance: Hot Wallet 20"
+      source: "https://etherscan.io/address/0xf977814e90da44bfa03b6295a0616a897441acec"
+      added: "2026-09-14"
+    - address: "0x5a52e96bacdabb82fd05763e25335261b270efcb"
+      category: cex
+      label: "Binance 28"
+      source: "https://etherscan.io/address/0x5a52e96bacdabb82fd05763e25335261b270efcb"
+      added: "2026-09-14"
+    - address: "0x28c6c06298d514db089934071355e5743bf21d60"
+      category: cex
+      label: "Binance 14"
+      source: "https://etherscan.io/address/0x28c6c06298d514db089934071355e5743bf21d60"
+      added: "2026-09-14"
+    - address: "0x43684d03d81d3a4c70da68febdd61029d426f042"
+      category: cex
+      label: "Binance 117"
+      source: "https://etherscan.io/address/0x43684d03d81d3a4c70da68febdd61029d426f042"
+      added: "2026-09-14"
+    - address: "0x47ac0fb4f2d84898e4d9e7b4dab3c24507a6d503"
+      category: bridge
+      label: "Binance: Binance-Peg Tokens"
+      source: "https://etherscan.io/address/0x47ac0fb4f2d84898e4d9e7b4dab3c24507a6d503"
+      added: "2026-09-14"
+    - address: "0x91d40e4818f4d4c57b4578d9eca6afc92ac8debe"
+      category: cex
+      label: "OKX 193"
+      source: "https://etherscan.io/address/0x91d40e4818f4d4c57b4578d9eca6afc92ac8debe"
+      added: "2026-09-14"
+    - address: "0x611f7bf868a6212f871e89f7e44684045ddfb09d"
+      category: cex
+      label: "OKX: Cold Wallet"
+      source: "https://etherscan.io/address/0x611f7bf868a6212f871e89f7e44684045ddfb09d"
+      added: "2026-09-14"
+    - address: "0x4a4aaa0155237881fbd5c34bfae16e985a7b068d"
+      category: cex
+      label: "OKX 154"
+      source: "https://etherscan.io/address/0x4a4aaa0155237881fbd5c34bfae16e985a7b068d"
+      added: "2026-09-14"
+    - address: "0xa31231e727ca53ff95f0d00a06c645110c4ab647"
+      category: cex
+      label: "Bybit: Wallet 84"
+      source: "https://etherscan.io/address/0xa31231e727ca53ff95f0d00a06c645110c4ab647"
+      added: "2026-09-14"
+    - address: "0xf89d7b9c864f589bbf53a82105107622b35eaa40"
+      category: cex
+      label: "Bybit: Hot Wallet"
+      source: "https://etherscan.io/address/0xf89d7b9c864f589bbf53a82105107622b35eaa40"
+      added: "2026-09-14"
+    - address: "0xd2dd7b597fd2435b6db61ddf48544fd931e6869f"
+      category: cex
+      label: "Kraken 246"
+      source: "https://etherscan.io/address/0xd2dd7b597fd2435b6db61ddf48544fd931e6869f"
+      added: "2026-09-14"
+    - address: "0x0d0707963952f2fba59dd06f2b425ace40b492fe"
+      category: cex
+      label: "Gate Deposit"
+      source: "https://etherscan.io/address/0x0d0707963952f2fba59dd06f2b425ace40b492fe"
+      added: "2026-09-14"
+    - address: "0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
+      category: cex
+      label: "Gate Deposit"
+      source: "https://etherscan.io/address/0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
+      added: "2026-09-14"
+    - address: "0xcffad3200574698b78f32232aa9d63eabd290703"
+      category: cex
+      label: "Crypto.com 16"
+      source: "https://etherscan.io/address/0xcffad3200574698b78f32232aa9d63eabd290703"
+      added: "2026-09-14"
+    - address: "0xa023f08c70a23abc7edfc5b6b5e171d78dfc947e"
+      category: cex
+      label: "Crypto.com 22"
+      source: "https://etherscan.io/address/0xa023f08c70a23abc7edfc5b6b5e171d78dfc947e"
+      added: "2026-09-14"
+    - address: "0x76ec5a0d3632b2133d9f1980903305b62678fbd3"
+      category: cex
+      label: "BtcTurk 13"
+      source: "https://etherscan.io/address/0x76ec5a0d3632b2133d9f1980903305b62678fbd3"
+      added: "2026-09-14"
+    - address: "0xab782bc7d4a2b306825de5a7730034f8f63ee1bc"
+      category: cex
+      label: "Bitvavo: Hot 3"
+      source: "https://etherscan.io/address/0xab782bc7d4a2b306825de5a7730034f8f63ee1bc"
+      added: "2026-09-14"
+    - address: "0xc3681709ee476308b45812eabe0eb22f3b816880"
+      category: cex
+      label: "Paribu 14"
+      source: "https://etherscan.io/address/0xc3681709ee476308b45812eabe0eb22f3b816880"
+      added: "2026-09-14"
+  "8453":
+    - address: "0xf977814e90da44bfa03b6295a0616a897441acec"
+      category: cex
+      label: "Binance: Hot Wallet 20"
+      source: "https://basescan.org/address/0xf977814e90da44bfa03b6295a0616a897441acec"
+      added: "2026-09-14"
+    - address: "0xbaed383ede0e5d9d72430661f3285daa77e9439f"
+      category: cex
+      label: "Bybit: Hot Wallet 6"
+      source: "https://basescan.org/address/0xbaed383ede0e5d9d72430661f3285daa77e9439f"
+      added: "2026-09-14"
+  # BSC. BscScan blocks automated reads (HTTP 403), so each tag was read on
+  # Etherscan instead: these are externally-owned wallets, and an EOA address
+  # is the same key -- the same owner -- on every EVM chain. Contracts are NOT
+  # carried across chains this way, since a contract address differs per chain.
+  "56":
+    - address: "0xf977814e90da44bfa03b6295a0616a897441acec"
+      category: cex
+      label: "Binance: Hot Wallet 20"
+      source: "https://etherscan.io/address/0xf977814e90da44bfa03b6295a0616a897441acec"
+      added: "2026-09-14"
+    - address: "0x5a52e96bacdabb82fd05763e25335261b270efcb"
+      category: cex
+      label: "Binance 28"
+      source: "https://etherscan.io/address/0x5a52e96bacdabb82fd05763e25335261b270efcb"
+      added: "2026-09-14"
+    - address: "0x43684d03d81d3a4c70da68febdd61029d426f042"
+      category: cex
+      label: "Binance 117"
+      source: "https://etherscan.io/address/0x43684d03d81d3a4c70da68febdd61029d426f042"
+      added: "2026-09-14"
+    - address: "0x8894e0a0c962cb723c1976a4421c95949be2d4e3"
+      category: cex
+      label: "Binance 51"
+      source: "https://etherscan.io/address/0x8894e0a0c962cb723c1976a4421c95949be2d4e3"
+      added: "2026-09-14"
+    - address: "0x4982085c9e2f89f2ecb8131eca71afad896e89cb"
+      category: cex
+      label: "MEXC 13"
+      source: "https://etherscan.io/address/0x4982085c9e2f89f2ecb8131eca71afad896e89cb"
+      added: "2026-09-14"
+    - address: "0xffa8db7b38579e6a2d14f9b347a9ace4d044cd54"
+      category: cex
+      label: "Bitget 35"
+      source: "https://etherscan.io/address/0xffa8db7b38579e6a2d14f9b347a9ace4d044cd54"
+      added: "2026-09-14"
+    - address: "0x1ab4973a48dc892cd9971ece8e01dcc7688f8f23"
+      category: cex
+      label: "Bitget 6"
+      source: "https://etherscan.io/address/0x1ab4973a48dc892cd9971ece8e01dcc7688f8f23"
+      added: "2026-09-14"
+    - address: "0x0d0707963952f2fba59dd06f2b425ace40b492fe"
+      category: cex
+      label: "Gate Deposit"
+      source: "https://etherscan.io/address/0x0d0707963952f2fba59dd06f2b425ace40b492fe"
+      added: "2026-09-14"
+    - address: "0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
+      category: cex
+      label: "Gate Deposit"
+      source: "https://etherscan.io/address/0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
+      added: "2026-09-14"

@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -147,6 +148,13 @@ class BaseCollector(ABC):
         self.config = get_config()
         self.log = get_logger(f"collector.{self.name}")
         self._limiter = self._build_limiter()
+        #: Extra limiters for collectors that talk to more than one source --
+        #: a holder read hits GoPlus and a block explorer, which have separate
+        #: budgets. Sharing one bucket would pace the fast source at the slow
+        #: one's rate. Built lazily from settings.rate_limits.
+        self._source_limiters: dict[str, Limiter | None] = {}
+        #: Earliest monotonic time the next call to an evenly spaced source may go.
+        self._next_slot: dict[str, float] = {}
         self._warnings: list[str] = []
 
     # -- infrastructure ------------------------------------------------------
@@ -158,14 +166,47 @@ class BaseCollector(ABC):
         # rather than throwing and burning a retry attempt on our own limiter.
         return Limiter(Rate(per_minute, Duration.MINUTE), raise_when_fail=False)
 
-    async def _acquire(self) -> None:
-        if self._limiter is None:
+    def _limiter_for(self, key: str) -> Limiter | None:
+        if key not in self._source_limiters:
+            per_minute = self.config.settings.rate_limits.get(key)
+            self._source_limiters[key] = (
+                Limiter(Rate(per_minute, Duration.MINUTE), raise_when_fail=False)
+                if per_minute
+                else None
+            )
+        return self._source_limiters[key]
+
+    async def _acquire(self, limiter_key: str | None = None) -> None:
+        limiter = self._limiter if limiter_key is None else self._limiter_for(limiter_key)
+        if limiter is None:
             return
+        await self._space(limiter_key or self.rate_limit_key)
+        bucket = self.name if limiter_key is None else f"{self.name}:{limiter_key}"
         for _ in range(600):  # bounded: never spin forever on a stuck bucket
-            if self._limiter.try_acquire(self.name):
+            if limiter.try_acquire(bucket):
                 return
             await asyncio.sleep(0.1)
         raise RuntimeError(f"{self.name}: rate limiter did not release within 60s")
+
+    async def _space(self, key: str) -> None:
+        # A sliding-window limiter lets the whole per-minute budget go in the
+        # first seconds of the window. GoPlus answers such a burst with code 4029
+        # even when the minute total is within its documented limit, so a source
+        # listed in rate_limit_spacing gets one call every 60/rate seconds.
+        delay = self._reserve_slot(key)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def _reserve_slot(self, key: str) -> float:
+        """Book the next evenly spaced slot for `key`; return seconds to wait."""
+        settings = self.config.settings
+        per_minute = settings.rate_limits.get(key)
+        if key not in settings.rate_limit_spacing or not per_minute:
+            return 0.0
+        now = time.monotonic()
+        slot = max(now, self._next_slot.get(key, now))
+        self._next_slot[key] = slot + 60.0 / per_minute
+        return slot - now
 
     def client(self, base_url: str = "", **kwargs: Any) -> httpx.AsyncClient:
         """An HTTP client with this project's timeout and user agent applied."""
@@ -185,6 +226,7 @@ class BaseCollector(ABC):
         client: httpx.AsyncClient,
         method: str,
         url: str,
+        limiter_key: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """One rate-limited, retried HTTP call returning parsed JSON.
@@ -203,7 +245,7 @@ class BaseCollector(ABC):
             reraise=True,
         ):
             with attempt:
-                await self._acquire()
+                await self._acquire(limiter_key)
                 response = await client.request(method, url, **kwargs)
                 if response.status_code in RETRYABLE_STATUS:
                     raise RetryableHTTPError(response.status_code, str(response.url), response.text)

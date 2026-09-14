@@ -329,6 +329,13 @@ def _coverage(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
         ),
         ("attention_snapshot", "t.snapshot_date = ?", "t.social_volume IS NOT NULL"),
     )
+    from src.config import get_config
+    from src.timeutil import add_days
+
+    # Tables refreshed in rolling batches, with the age window the screen
+    # accepts for them. MAX(snapshot_date) covers only the newest batch there.
+    rolling = {"holder_snapshot": get_config().thresholds.layer1.holder_snapshot_max_age_days}
+
     out: dict[str, dict[str, Any]] = {}
     for table, date_clause, data_clause in tables:
         # Count against the snapshot the SCREEN actually used, not against
@@ -359,17 +366,23 @@ def _coverage(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
                 (run_date,),
             )
             bound = as_of or run_date
+        params: tuple[Any, ...] = (run_date, bound)
+        if table in rolling:
+            # Count every asset with a row inside the window the screen itself
+            # accepts (pipeline._latest_holders), not only the newest batch.
+            date_clause = "t.snapshot_date BETWEEN ? AND ?"
+            params = (run_date, add_days(run_date, -rolling[table]), run_date)
         measured = (
             db.scalar(
                 scoped.format(table=table, date_clause=date_clause, data_clause=data_clause),
-                (run_date, bound),
+                params,
             )
             or 0
         )
         present = (
             db.scalar(
                 scoped.format(table=table, date_clause=date_clause, data_clause="1=1"),
-                (run_date, bound),
+                params,
             )
             or 0
         )

@@ -52,7 +52,8 @@ python -m venv .venv && .venv/Scripts/activate    # or bin/activate
 pip install -r requirements.txt
 cp .env.example .env                              # every secret is optional
 python -m src.cli init-db
-python -m src.cli collect --tier daily
+python -m src.cli collect daily
+python -m src.cli collect supply                   # holders + unlocks; slow on first run
 python -m src.cli screen
 python -m src.cli report
 python -m src.cli publish
@@ -74,7 +75,7 @@ cd web && npm install && npm run dev
 | Command | What it does |
 |---|---|
 | `init-db` | Creates every table, index and trigger. Idempotent. |
-| `collect --tier {daily,hourly,fast}` | Runs a tier of collectors. Stateless: no loop, no state. |
+| `collect {daily,hourly,supply,fast}` | Runs a tier of collectors, or one by name. Stateless: no loop, no state. `supply` is holder concentration and the unlock calendar, on its own workflow (D-040). |
 | `screen` | Layer 1, then Layer 2, then Layer 3 on the ranked head. |
 | `journal` / `journal --report` | Records signals and controls / prints statistics. |
 | `report` | Markdown to `reports/YYYY-MM-DD.md`. |

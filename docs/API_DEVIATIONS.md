@@ -147,3 +147,97 @@ exceptions.
 from the error message, because there is no message to read. It compares row
 counts before and after.
 
+
+---
+
+## 2026-09-13 — GoPlus `token_security` (R1)
+
+- **Document said** (the R1 source brief): exclude burn, CEX and locked holders by
+  their `tag`; remove LP holdings using `lp_holders`; GoPlus is 30 calls/min.
+- **Observed** (live, AAVE/CAKE/AERO/JUP):
+  1. `tag` was an empty string on all 40 top holders pulled, including the
+     CAKE burn address holding 92.6% of supply.
+  2. `lp_holders` are holders of the LP token, not the pool addresses that
+     appear among the token's holders. The pools are in `dex[].pair`.
+  3. Uniswap V4 entries in `dex[]` carry a 32-byte pool id as `pair`, not an
+     address; V4 liquidity sits in the singleton PoolManager.
+  4. `contract_addresses=a,b` returned a result for one address only.
+  5. Solana returns `token_account` (not owner) and `dex[]` entries with every
+     field null.
+  6. No rate-limit headers on any response. Rate limiting arrives as **HTTP 200
+     with `code: 4029`** in the body, so an HTTP-status retry never sees it. The
+     first live run, paced at 25/min, lost 136 of 315 reads this way.
+  7. The keyless ceiling is well under the documented 30/min, and even spacing
+     does not remove it (2026-09-14, evenly spaced probes, no backoff):
+
+     | Spaced rate | Calls | Code 4029 | Successful reads/min |
+     |---|---:|---:|---:|
+     | 30/min | 90 | 40 | 16.9 |
+     | 25/min | 75 | 29 | 15.5 |
+     | 20/min | 60 | 17 | 14.6 |
+     | 13/min | 72 | 6 | 12.1 |
+     | 12/min | 72 | 4 | 11.5 |
+
+     A refused call costs only its slot: faster sending still lands more reads.
+     The 20/min burst run before this (27 min 43 s, 11.4 reads/min) lost most of
+     its time to 48 backoff waits of 15-60 s, arriving every ~12 calls, ~60 s apart.
+     A live run spaced at 25/min with a 3 s doubling wait took 26 min 31 s (402
+     calls, 87 refused, 0 lost): refusals cluster, so pacing alone gains ~4%.
+- **Code now does:** excludes by burn address, `is_locked`, `dex[].pair`, a
+  curated file, and Blockscout implementation names (`src/collectors/holders.py`);
+  one contract per call, spaced evenly at 25/min (`rate_limit_spacing`), retrying
+  code 4029 after a short doubling wait (3 s, 6 retries); Solana flagged
+  `token_accounts`.
+- **Impact:** a tag-based filter would have excluded nothing, and AERO would have
+  failed L1 at a raw 67% with half its supply in a vote escrow.
+
+## 2026-09-13 — DefiLlama emissions (R4)
+
+- **Document said:** `api.llama.fi/emission/{protocol}` is reachable
+  unauthenticated, and `DefiLlama/emissions-adapters` is an open-source backstop.
+- **Observed:** `api.llama.fi/emissions` and `/emission/aptos` return **402**.
+  `github.com/DefiLlama/emissions-adapters` returns **404** (so do the obvious
+  renames); the only recent copy has no license. The public host
+  `defillama-datasets.llama.fi` returns **200** for `/emissionsProtocolsList` and
+  `/emissions/{slug}`, with `metadata.unlockEvents[].cliffAllocations[]` and
+  `linearAllocations[]` (`recipient`, `category`, `amount` or
+  `previousRatePerWeek`/`newRatePerWeek`/`endTimestamp`). A category not in the
+  brief exists: `Uncategorized`. Some protocols have `gecko_id: null` but a
+  `metadata.token` of `<platform>:<address>`.
+- **Code now does:** reads the datasets host (`src/collectors/unlocks.py`), maps
+  `category` through `settings.unlocks.category_map`, and resolves missing gecko
+  ids through `asset_contract.platforms_json`.
+- **Impact:** R4 resolved at no cost; the proposed backstop does not exist.
+
+## 2026-09-13 — Solana public RPC
+
+- **Document said:** `getTokenLargestAccounts` on the public RPC is a free,
+  "unlimited-ish" Solana cross-check.
+- **Observed:** HTTP 429 "Too many requests for a specific RPC call" on the first
+  `getTokenLargestAccounts` call; `getTokenSupply` succeeded.
+- **Code now does:** does not use it. Solana concentration comes from GoPlus alone
+  and is flagged approximate.
+
+## 2026-09-13 — CoinGecko `/asset_platforms` and `/coins/list`
+
+- **Observed:** `chain_identifier` is the EVM chain id, and null for Solana, Tron,
+  Sui and TON. `native_coin_id` is `ethereum` for Base, Arbitrum, Optimism, Linea,
+  zkSync, Scroll and Blast. In `/coins/list?include_platform=true` the first
+  platform listed matched `/coins/{id}` `asset_platform_id` for all 48 multi-platform
+  coins looked up in the first live run (2026-09-13). The ordering is still
+  undocumented, so the guess stays provisional until a lookup confirms it. The
+  free tier answered 85 of 136 calls in that run with 429; retries recovered all
+  but 11 origin lookups.
+- **Code now does:** derives GoPlus chains from `chain_identifier`; treats the
+  first-listed platform as provisional only, confirmed by `asset_platform_id` in
+  bounded batches (`src/collectors/contracts.py`).
+
+## 2026-09-13 — Blockscout `/api/v2/addresses/{address}`
+
+- **Observed:** proxies return their proxy contract as `name`
+  (`InitializableImmutableAdminUpgradeabilityProxy`, `SafeProxy`) and the logic
+  contract in `implementations[].name` (`ATokenWithDelegationInstance`, `Safe`).
+  Hosts: eth, base, arbitrum, polygon, zksync answer 200; optimism, scroll and
+  gnosis answer 301; `explorer.linea.build` and `bsc.blockscout.com` are 404.
+- **Code now does:** matches the implementation name first, then the contract
+  name; chains without a host are flagged `names_unavailable`.

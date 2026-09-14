@@ -905,3 +905,349 @@ The first send from Actions would have failed on precisely the days the
 dark-check line exists to be read. Dynamic text is now escaped with a
 backslash; `TestSummaryIsParseableMarkdown` asserts no unescaped `_` or `[`,
 and no unbalanced `*`, survives outside a code span.
+
+---
+
+## D-035 — A native coin is not applicable to the holder check
+
+**Date:** 2026-09-13 · **Status:** accepted · **Agreed with the user**
+
+L1_HOLDER_CONC reads the top-10 holders of a token contract. A chain's own
+coin -- BTC, ETH, SOL, BNB, HYPE, AVAX -- has no token contract, so there is
+nothing to read. Under the per-asset rule (a missing input FAILS the asset),
+switching the check on would have disqualified every native coin in the
+universe for being native: 112 of the 455 screened assets with a CoinGecko id
+on 2026-09-13.
+
+`asset_contract.applicability` has three values, and each is handled
+differently:
+
+| Value | Meaning | L1_HOLDER_CONC |
+|---|---|---|
+| `measurable` | a token contract on a chain GoPlus serves | judged on its number |
+| `native_coin` | a chain's own coin | **passes, reason "not applicable"** |
+| `unsupported_chain` | origin chain no holder source covers (Sui, TON) | fails closed -- that one IS a gap |
+
+Native is decided first from CoinGecko's `/asset_platforms` (`native_coin_id`),
+then from a coin that lists no contract anywhere (`resolved_via =
+no_platforms`). The second rule is an assumption -- overwhelmingly XRP, ADA,
+DOGE-type chains -- and `resolved_via` keeps it auditable per asset.
+
+For source coverage (D-007) a native coin counts as resolvable, so natives do
+not drag coverage under the floor and switch the check off for everyone.
+
+**More chains, as asked.** Readable chains are derived rather than listed: a
+CoinGecko platform is readable when its EVM `chain_identifier` appears in
+GoPlus's own `supported_chains` (43 on 2026-09-13), plus Solana and Tron. When
+GoPlus adds a chain, coverage widens with no code change. The projection on
+2026-09-13 was 324 measurable, 112 native and 19 unsupported, most of the
+unsupported on Sui and TON.
+
+**Multi-chain tokens.** 189 measurable assets exist on more than one supported
+chain, and only the origin chain's holders describe the token -- a bridged
+copy's top holder is the bridge. CoinGecko's `asset_platform_id` settles the
+origin; it costs one call each at 10/min, so it is looked up in bounded
+batches and cached. Until then the first platform CoinGecko lists is used and
+marked `coins_list_first_platform`. An origin on a chain we cannot read makes
+the token `unsupported_chain`: a bridge copy is never measured in its place.
+
+---
+
+## D-036 — What counts as holder concentration
+
+**Date:** 2026-09-13 · **Status:** accepted · **Resolves R1 and R5**
+
+Source: GoPlus `token_security` -- free, keyless, one contract per call (a
+comma-separated list returns one result).
+
+**A raw top-10 sum fails healthy tokens.** Measured live, not assumed:
+
+| Token | Largest holder | Share | Raw top-10 |
+|---|---|---:|---:|
+| CAKE | `0x...dead` (burned) | 92.6% | 96% |
+| AERO | `VotingEscrow` (veAERO) | 50.0% | **67% -- fails 0.60** |
+| AAVE | `Staked AAVE` (safety module) | 15.5% | 43% |
+
+GoPlus's `tag` field was empty on all 40 holders pulled, so filtering on the
+labels its documentation describes excludes nothing. A holder is excluded,
+with the reason recorded in `holders_json`, when it is:
+
+1. a burn address (`config/excluded_addresses.yaml`);
+2. `is_locked = 1` in GoPlus;
+3. one of the token's own DEX pairs (GoPlus `dex[].pair`);
+4. curated in `config/excluded_addresses.yaml` -- exchange wallets above all,
+   and only with a label and a source someone checked;
+5. a contract whose name matches `settings.holders.exclude_contract_name_patterns`.
+
+Names come from Blockscout, which reports the **implementation** behind a
+proxy. That is what makes rule 5 work: `ATokenWithDelegationInstance` (lenders'
+deposits) is excluded, while `Safe` (a multisig) and `AaveEcosystemReserveV2`
+(a treasury) are deliberately not -- those are one party, which is exactly the
+RAVE pattern the check exists for.
+
+The excluded share leaves the denominator too: with half the supply in escrow,
+30% held by the top holders is 60% of what can trade. `top10_share_raw`,
+`top1_share` and `excluded_share` are stored beside the effective figure, so
+the gap between raw and effective stays visible.
+
+**Limits, recorded rather than hidden.**
+- Only the top 10 are visible. After exclusions fewer than ten real holders
+  remain, so holders 11 onwards are missing from the numerator.
+- Solana returns token accounts, not owners, and no DEX pairs. One owner can
+  hold several accounts and a pool vault is an account, so a Solana reading is
+  approximate in both directions (`data_quality = token_accounts`). The public
+  Solana RPC returned 429 on its first `getTokenLargestAccounts`, so it is not
+  used as a cross-check.
+- Chains with no Blockscout instance (BSC among them) get no names, so pooled
+  contracts there are counted as holders -- conservative, flagged
+  `names_unavailable`.
+- Every visible top holder excluded is reported as unmeasured, never as 0%.
+
+Holders refresh in rolling batches on `collect-supply`. The screen reads the
+newest row per asset no older than `holder_snapshot_max_age_days` (14); a
+failed read writes nothing, so the last good measurement stands until it ages
+out.
+
+---
+
+## D-038 — L1_UNLOCK requires an unlock schedule, not any event
+
+**Date:** 2026-09-13 · **Status:** accepted · **Fixes a live defect**
+
+`check_unlock` gated on `has_event_data`. An asset whose only event on file was
+a listing therefore had event data, no vesting schedule, and fell through to
+`days_to_next_major_unlock is None` -- reported as "no major unlock scheduled
+ahead". Ignorance read as a clean schedule. D-022 fixed the same confusion in
+Layer 2; it survived in Layer 1 because the unlock check was dark and nothing
+exercised it.
+
+The check now gates on `has_unlock_record`, and so does its source-coverage
+input, so a run full of listing events can no longer make the unlock check
+look live. Regression tests: `TestUnlockCheckNeedsASchedule`.
+
+---
+
+## D-037 — The unlock source is DefiLlama's datasets host
+
+**Date:** 2026-09-13 · **Status:** accepted · **Resolves R4; supersedes the source chain in D-008**
+
+The emissions-adapters repository proposed as the source is **no longer
+public**: `github.com/DefiLlama/emissions-adapters` returns 404, as do the
+obvious renames, and the only recent copy (created and last pushed the same
+day, 2026-04-01) carries no license. It cannot be vendored or self-computed.
+
+What does work, verified live:
+
+| Endpoint | Result |
+|---|---|
+| `api.llama.fi/emissions`, `/emission/{slug}` | 402, paid plan |
+| `defillama-datasets.llama.fi/emissionsProtocolsList` | **200**, 372 protocols |
+| `defillama-datasets.llama.fi/emissions/{slug}` | **200**, 0.1-2.5 MB each |
+
+The datasets host serves the adapters' computed output. Per protocol,
+`metadata.unlockEvents` lists cliff and linear allocations with an explicit
+`recipient` and `category`, and a top-level `gecko_id` joins directly to
+`market_snapshot.coingecko_id` (a protocol without one is matched through its
+`<platform>:<address>` token against `asset_contract`).
+
+**Category to recipient_type** (`settings.unlocks.category_map`):
+`insiders` team; `privateSale` investor; `publicSale`, `airdrop`, `farming`,
+`staking`, `liquidity` community; `ecosystem` ecosystem; `noncirculating`
+(foundation and community reserves) ecosystem, agreed with the user;
+`Uncategorized` NULL. A NULL recipient inside the window is still judged on
+size, because an unlabelled cliff is not a harmless one.
+
+**Point-in-time rules.**
+- `first_seen_utc` is when we first saw the event, and a refresh never moves it.
+- The event id excludes the amount, so a revised size updates the event
+  instead of adding a second that double-counts the unlock.
+- A FUTURE event a refresh no longer lists gets `retracted_utc`; it is never
+  deleted. `load_known_events` shows it to any as-of date before the
+  retraction and hides it after.
+- If two protocols resolve to one asset, the fuller schedule wins and the
+  other is logged, not merged.
+
+**Linear vesting** is stored as `unlock_linear` at each rate change, sized as
+the lookahead window's worth of tokens at the new weekly rate, so the same
+5%-of-circulating test applies to a stream as to a cliff. A stream that began
+before the window and is still running produces no future event; the check
+sees rate changes, not a stream's continuation.
+
+**Approximation.** `pct_of_circulating` uses today's circulating supply for
+every event, past ones included, so "days since the last major unlock" judges
+history by today's float.
+
+**Refresh.** Bounded per run: protocols mapped to a screened asset re-fetch
+after 7 days, unmapped ones are re-checked after 30, and never-seen ones come
+second so the mapping bootstraps. History older than 730 days is not stored.
+
+**Coverage is skewed toward established tokens** and cannot be fixed from
+here: most microcaps have no adapter. Whether L1_UNLOCK crosses the 20%
+coverage floor, and what it does to the survivor list when it does, was
+measured on the first live run -- see the entry below this one.
+
+---
+
+## D-039 — Added columns reach databases that already exist
+
+**Date:** 2026-09-13 · **Status:** accepted
+
+`CREATE TABLE IF NOT EXISTS` never alters an existing table. A column added to
+`schema.sql` reached fresh databases and silently never reached the local
+sqlite file or the Turso database already in production, where the first
+query naming it would fail at 3am.
+
+`connection.ADDED_COLUMNS` lists columns added after a table shipped.
+`Database.ensure_columns()` adds any that are missing with `ALTER TABLE ... ADD
+COLUMN` -- additive only, idempotent, skipping tables that do not exist yet --
+and then runs statements that depend on them (the `source_ref` index). It runs
+inside `apply_schema`, and once per database per process from
+`open_database()`, because `screen.yml` never runs `init-db` and the screen
+reads two of the new columns. Test: `TestAddedColumnsReachExistingDatabases`.
+
+---
+
+## D-040 — Holders and unlocks run in their own workflow
+
+**Date:** 2026-09-13 · **Status:** accepted
+
+`collect-supply.yml` runs the `supply` tier: `asset_contracts`, `holders`,
+`unlocks`, in that order. These sources are free but slow -- GoPlus is ~25
+calls a minute, CoinGecko's origin lookups 10, DefiLlama up to 2.5 MB per
+protocol -- and inside `collect-daily` they would push a 20-minute job past its
+timeout and take the price and derivatives snapshots down with them. `unlocks`
+moved out of the daily tier for the same reason.
+
+Every collector in the tier refreshes in bounded batches and keeps what it
+already has, so a run cut short loses progress, never data. Like every workflow
+here it is `workflow_dispatch` only, and it pings `HEALTHCHECK_SUPPLY` on
+success when that secret is set.
+
+---
+
+## D-041 — No unlock schedule on file is not a failure
+
+**Date:** 2026-09-14 · **Status:** accepted · **The user's decision; supersedes the per-asset rule for L1_UNLOCK**
+
+The first live screen with R4 data (2026-09-14, local) put 121 of 528 assets
+(22.9%) on a DefiLlama unlock schedule. That crossed the 20% coverage floor, the
+check went live, and under D-007's per-asset rule every asset without a schedule
+failed it: 145 newly disqualified -- AAVE, ADA, BNB, ATOM, BCH among them, most
+with no vesting at all -- and survivors fell from 207 to 34. Only one of the
+146 new L1_UNLOCK failures was a real unlock (2Z, 8.6% to investors in 18 days).
+
+The user's position: unlocks are one criterion, not the screen. An absent
+adapter is a gap in DefiLlama's coverage, not evidence about the asset, and
+letting it disqualify three quarters of the universe hands the whole verdict to
+one data source.
+
+**What the check does now.**
+- No schedule on file: **passes**, reason "not assessed: no unlock schedule on
+  file for this asset". Never "no major unlock scheduled ahead" -- that sentence
+  is reserved for an asset whose schedule was actually read (D-038 still holds).
+- A schedule on file: judged exactly as before. A team or investor unlock above
+  5% of circulating inside 30 days fails; an unsized one inside the window fails.
+
+**What stays visible.** Coverage is still computed and reported on the Health
+page, and the L2 events block still refuses to score an asset with no schedule as
+clean (D-022). The trade-off, recorded plainly: a microcap with a large unlock
+that DefiLlama does not track now passes L1_UNLOCK. The check can only catch
+what is on the calendar.
+
+---
+
+## D-042 — Holder data is one day fresh, and never capped
+
+**Date:** 2026-09-14 · **Status:** accepted · **The user's decision; supersedes the 14-day window in D-036**
+
+D-036 accepted a holder snapshot up to 14 days old, on the reasoning that
+concentration moves slowly, and a per-run cap was proposed so a full refresh
+could spread across runs. The user rejected both: the screen must run on the
+freshest data at all times, and holder data must be as current as the prices it
+is judged beside.
+
+- `layer1.holder_snapshot_max_age_days` is **1**: a reading from the run date or
+  the day before counts, nothing older does.
+- `holders.max_tokens_per_run` stays above the measurable universe (400 against
+  315): every run re-reads every token. It is a safety bound, not a rotation.
+- `collect-supply` must therefore run **daily**, after `collect-daily`. Its
+  timeout rose from 60 to 90 minutes, because a full holder refresh took ~32
+  minutes at GoPlus's free-tier pace on 2026-09-14 and a timeout loses the run.
+
+**The failure mode this chooses.** A missed supply run leaves every holder
+reading two days old the next morning. Coverage for L1_HOLDER_CONC then drops
+under the 20% floor and the check goes dark for that run -- reported on the
+Health page and in the report -- instead of screening on stale holders or
+failing the universe. That is D-007 working as intended: loud, not wrong.
+
+Speeding the refresh up is the next question: a GoPlus access token (see the
+entry that follows, once assessed).
+
+---
+
+## D-043 — Verified exchange wallets are excluded from holder concentration
+
+**Date:** 2026-09-14 · **Status:** accepted · **The user's decision (option "A + B"); completes R5**
+
+With every holder read recovered (D-042's retry, 0 lost reads), 207 of 309
+measured tokens read above the 0.60 top-10 threshold. The user chose to keep
+the threshold as built (A) and to exclude exchange wallets properly (B) --
+not to soften the check for thin readings.
+
+**How the list was built.** Candidates were the non-contract wallets appearing
+in the kept top 10 of five or more unrelated tokens (35 found). Each was checked
+against its public name tag on the chain's explorer, and only tagged ones went
+into `config/excluded_addresses.yaml`, with label, source URL and date:
+
+- Ethereum (18): Binance Hot Wallet 20, 14, 28, 117 and its peg-token custody
+  wallet (category `bridge`); OKX 193, 154 and Cold Wallet; Bybit Hot Wallet and
+  Wallet 84; Kraken 246; two Gate deposit wallets; Crypto.com 16 and 22; BtcTurk
+  13; Bitvavo Hot 3; Paribu 14.
+- Base (2): Binance Hot Wallet 20; Bybit Hot Wallet 6.
+- BSC (9): BscScan refuses automated reads, so tags were read on Etherscan. An
+  externally-owned address is the same key on every EVM chain; contracts are not
+  carried across chains this way.
+
+Left out on purpose: four wallets with no public tag (an unlabelled wallet may be
+a whale, and excluding it would hide real concentration) and two BSC contracts.
+A test now fails if any curated entry lacks a label, a source or a date.
+
+**Effect, measured on the 2026-09-14 local screen:** measured holder failures
+fell from 207 to 176, and L1 survivors rose from 140 to **152 of 528 (28.8%)** --
+inside the 20-50% band. The 176 that still fail are led by 77 unlabelled wallets
+or Solana token accounts, 38 multisigs, 39 unnamed BSC contracts and 22 other
+named contracts. Treating thin readings as advisory would add 19 more survivors;
+that was offered and not chosen.
+
+---
+
+## D-044 — GoPlus calls are evenly spaced; it barely shortens the refresh
+
+**Date:** 2026-09-14 · **Status:** accepted · **Tested at the user's request**
+
+The 20/min burst run spent most of its 27 min 43 s in 48 backoff waits of
+15-60 s, and the first came 2 s in: a sliding-window limiter lets the whole
+minute's budget go at once. The question was whether spacing calls evenly would
+avoid the refusals and shorten the refresh without a GoPlus token.
+
+**Probes** (evenly spaced, no backoff; table in API_DEVIATIONS.md): no spaced
+rate from 12 to 30/min ran clean, and successful reads topped out at 11.5-16.9
+per minute. The keyless ceiling is the limit, not the shape of the traffic.
+
+**Live run**, spaced at 25/min with a short doubling wait (3 s, 6 retries):
+
+| | Burst, 20/min, 15 s wait | Spaced, 25/min, 3 s wait |
+|---|---:|---:|
+| Holder run | 27 min 43 s | 26 min 31 s |
+| GoPlus calls | 363 | 402 |
+| Refused (code 4029) | 48 | 87 |
+| Lost reads | 0 | 0 |
+| Reads per minute | 11.4 | 11.9 |
+
+Refusals cluster: after one, the next few calls are refused too, so a short
+wait mostly buys another refusal. Kept, because it is no slower, loses no read,
+and is a small addition to the limiter (`rate_limit_spacing`, off for every
+other source). But it is not the answer to a faster refresh: GoPlus serves
+about 12 keyless reads a minute to one IP, so ~315 tokens need ~26 minutes
+whatever the pacing. Only a higher limit (a GoPlus token, D-042) or fewer calls
+changes that.

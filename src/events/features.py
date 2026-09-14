@@ -92,9 +92,11 @@ def load_known_events(
     sql = (
         "SELECT base_asset, event_type, event_date_utc, recipient_type, "
         "       magnitude_tokens, pct_of_circulating, confidence, first_seen_utc "
-        "FROM scheduled_event WHERE first_seen_utc <= ?"
+        "FROM scheduled_event WHERE first_seen_utc <= ? "
+        # A retracted event was knowable until it was retracted, and not after.
+        "AND (retracted_utc IS NULL OR retracted_utc > ?)"
     )
-    params: list[Any] = [cutoff]
+    params: list[Any] = [cutoff, cutoff]
     if assets:
         sql += f" AND base_asset IN ({','.join('?' for _ in assets)})"
         params.extend(assets)

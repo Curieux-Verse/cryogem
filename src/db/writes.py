@@ -51,6 +51,9 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "trigger_lag": ("run_id",),
     "journal_entry": ("entry_id",),
     "forward_return": ("entry_id", "horizon"),
+    "asset_contract": ("coingecko_id",),
+    "address_label": ("chain", "address"),
+    "emission_protocol": ("slug",),
 }
 
 # Append-only tables: never UPDATE, only INSERT OR IGNORE.
