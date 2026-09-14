@@ -1251,3 +1251,42 @@ other source). But it is not the answer to a faster refresh: GoPlus serves
 about 12 keyless reads a minute to one IP, so ~315 tokens need ~26 minutes
 whatever the pacing. Only a higher limit (a GoPlus token, D-042) or fewer calls
 changes that.
+
+---
+
+## D-045 — The supply tier runs as a job inside collect-daily
+
+**Date:** 2026-09-14 · **Status:** accepted · **Amends D-040; moves the journal slot**
+
+D-040 gave holders and unlocks their own dispatch-only workflow, and the runbook
+planned to trigger it at 04:10 UTC. That order was wrong: `screen` chains off
+`collect-daily` and runs around 03:30, so it would have screened on the previous
+day's holder readings every day -- the opposite of D-042.
+
+**Why not chain it.** Making `collect-supply` a `workflow_run` link between
+`collect-daily` and `screen` was the obvious fix, and it fails silently. GitHub
+runs at most three `workflow_run` levels after a dispatched workflow ("if you
+attempt to trigger ... `A` → `B` → `C` → `D` → `E` → `F`, workflows `E` and `F`
+will not be run"). `screen` → `publish` → `build-site` already uses all three;
+a supply link would make `build-site` the fourth, and the dashboard would stop
+rebuilding with no error anywhere.
+
+**What was built.** A `supply` job in `collect-daily.yml`:
+
+- `needs: collect` -- the holder and contract collectors read the newest
+  `universe_snapshot` and `market_snapshot`. Run earlier, an asset that entered
+  the universe that day would have no reading and fail L1_HOLDER_CONC on day one.
+- only for the `daily` tier;
+- `continue-on-error: true` -- a failed or timed-out supply run leaves the
+  workflow green, so the screen still runs on yesterday's readings (still valid
+  under D-042). The failure shows as a red job and a missing `HEALTHCHECK_SUPPLY`
+  ping; a second missed day turns the check off under D-007.
+- the `collect-supply` concurrency group, shared with `collect-supply.yml`, which
+  stays as the manual path (bootstrap, re-run) so the two never read GoPlus at once.
+
+No new cron-job.org job is needed.
+
+**The cost: journal moves from 04:10 to 06:10 UTC.** The journal records that
+day's ranking, and the screen now ends around 04:30 -- at worst 05:20, with every
+job at its timeout. A journal firing first would find no ranking and skip the
+day for good. This departs from `IMPLEMENTATION_SPEC.md`'s 04:10 slot on purpose.

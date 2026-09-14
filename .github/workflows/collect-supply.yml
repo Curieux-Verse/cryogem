@@ -9,8 +9,14 @@
 #
 # Every collector here refreshes in bounded batches and keeps what it already
 # has, so a run cut short loses progress, never data. Holder readings count
-# for one day only (layer1.holder_snapshot_max_age_days, D-042), so this must
-# run DAILY, after collect-daily has written the day's market data.
+# for one day only (layer1.holder_snapshot_max_age_days, D-042), so the tier
+# must run DAILY, after collect-daily has written the day's market data.
+#
+# THE DAILY RUN IS NOT THIS FILE. It is the `supply` job inside collect-daily.yml
+# (D-045), so the screen waits for it. This workflow is the MANUAL path: the
+# first bootstrap, or a re-run after a failed day. Keep its steps in step with
+# that job. Both use the `collect-supply` concurrency group, so a manual run and
+# the daily job never read GoPlus at the same time.
 #
 # workflow_dispatch ONLY, like every workflow here. No `on: schedule` -- see the
 # header of collect-daily.yml and the CI guard.
@@ -30,8 +36,8 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    # Every run re-reads every measurable token (~32 min at GoPlus's free-tier
-    # pace, D-042). A cold start adds ~370 DefiLlama protocols and CoinGecko
+    # Every run re-reads every measurable token (~27 min at GoPlus's keyless
+    # pace, D-042, D-044). A cold start adds ~370 DefiLlama protocols and CoinGecko
     # origin lookups on top. A timeout loses the whole run's holder data, so
     # the budget is generous rather than tight.
     timeout-minutes: 90

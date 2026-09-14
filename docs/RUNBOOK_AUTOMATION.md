@@ -125,12 +125,25 @@ outside: `screen` chains off `collect-daily` via `workflow_run`, `publish` off
 job's success, so a failed collection never produces a screen and a failed
 screen is never published.
 
+**Holders and unlocks are not a fifth job.** They run as the `supply` job inside
+`collect-daily`, after its market-data job (D-045), so the screen waits for them.
+They cannot be a workflow of their own chained by `workflow_run`: GitHub runs at
+most three such levels, and `screen` → `publish` → `build-site` already uses all
+three. A fourth would silently stop the dashboard rebuilding. `collect-supply.yml`
+stays for manual use only — the first bootstrap, or a re-run after a failed day.
+
 | Job | Schedule (UTC) | Workflow file | Body |
 |---|---|---|---|
 | collect-daily | `10 3 * * *` | `collect-daily.yml` | `{"ref":"main","inputs":{"scheduled_for":"03:10"}}` |
 | collect-hourly | `25 * * * *` | `collect-hourly.yml` | `{"ref":"main","inputs":{"scheduled_for":":25"}}` |
-| journal | `10 4 * * *` | `journal.yml` | `{"ref":"main","inputs":{"scheduled_for":"04:10"}}` |
+| journal | `10 6 * * *` | `journal.yml` | `{"ref":"main","inputs":{"scheduled_for":"06:10"}}` |
 | backup | `0 5 * * 0` | `backup.yml` | `{"ref":"main"}` |
+
+**Journal is 06:10, not 04:10** (D-045). It journals *today's* ranking, so it must
+fire after the screen finishes. With the supply job the screen now ends around
+04:30, and in the worst case (every job running to its timeout: 20 + 90 + 20
+minutes from 03:10) at 05:20. A journal that fires first finds no ranking and
+skips the day — and a skipped journal day can never be written afterwards.
 
 `scheduled_for` is what makes the trigger-lag panel on the Health page work,
 and that panel is how a stray `on: schedule` is caught after it is merged.
@@ -181,12 +194,17 @@ is exactly where a silent chain break would show up.
 | screen | `HEALTHCHECK_SCREEN` | **25 hours** | 1 hour |
 | collect-supply | `HEALTHCHECK_SUPPLY` | **25 hours** -- it must run daily (D-042) | 1 hour |
 
-`collect-supply` (holders and unlocks, D-040) is dispatched on its own, like the
-collectors: at 04:10 UTC, after `collect-daily` has written the day's market data it
-reads. It must run **daily**: a holder reading counts for one day only (D-042), so a
-skipped day switches L1_HOLDER_CONC off the next morning. Every run re-reads every
-measurable token (~32 min at GoPlus's free-tier pace); the first run also maps ~370
-DefiLlama protocols.
+The supply check (holders and unlocks, D-040) is pinged by the `supply` job inside
+`collect-daily` — **no cron-job.org job of its own** (D-045). It runs daily as a
+consequence: a holder reading counts for one day only (D-042). The job is
+`continue-on-error`, so a failed supply run still lets the screen go ahead on
+yesterday's readings, and the workflow stays green — **this check is the only
+thing that notices**. Two missed days switch L1_HOLDER_CONC off (D-007). Every
+run re-reads every measurable token (~27 min at GoPlus's keyless pace, D-044).
+
+Bootstrap once, by hand, before the first scheduled `collect-daily`: run
+`collect-supply` from the Actions tab. The cold start maps ~370 DefiLlama
+protocols and resolves every contract, and is easier to watch on its own.
 
 **The daily periods are 25 hours, not 24**, so runner-provisioning drift does
 not cry wolf while a real one-day gap still alerts.
