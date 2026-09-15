@@ -1290,3 +1290,32 @@ No new cron-job.org job is needed.
 day's ranking, and the screen now ends around 04:30 -- at worst 05:20, with every
 job at its timeout. A journal firing first would find no ranking and skip the
 day for good. This departs from `IMPLEMENTATION_SPEC.md`'s 04:10 slot on purpose.
+
+---
+
+## D-046 — A base asset names one contract
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+`parse_symbol` strips a multiplier prefix so `1000PEPEUSDT` looks up as PEPE.
+That is only safe while nothing else reduces to the same name. The 2026-09-09
+universe held `BOBUSDT` (Build on Bitcoin, ~$15M market cap) and
+`1000000BOBUSDT` (an unrelated meme coin) and stored both as `BOB`. Every table
+keyed on `base_asset` mixed them: `price_daily` carried the meme coin's price
+(klines kept the higher-volume bar) beside the other token's market cap, and a
+journal entry would have taken its entry and exit prices from different coins.
+
+**Rule.** A venue's symbols are parsed as one list (`symbols.parse_universe`).
+When a multiplied contract's stripped base is also claimed by another contract,
+every multiplied contract keeps its prefix as its base (`1000000BOB`, multiplier
+1). The prefixed base matches no market-cap source and fails L1_NO_MCAP. That is
+deliberate: nothing here can say which token it is, and disqualification is the
+safe direction. `load_snapshots` also keeps one contract per base (the
+unmultiplied one) for universe snapshots written before this rule.
+
+**Also.** `1M` is a multiplier prefix (`1MBABYDOGEUSDT` → BABYDOGE). Index perps
+(`underlyingType: INDEX`, e.g. BTCDOMUSDT) leave the universe: they track a
+basket, so market cap, supply and holders do not exist for them.
+
+**Existing data.** `price_daily` rows for `BOB` written before this change are
+the meme coin's. Re-backfill klines for BOB after the first run under this rule.

@@ -39,7 +39,7 @@ from typing import Any
 from src.collectors.base import BaseCollector
 from src.db.connection import get_db
 from src.db.writes import upsert
-from src.symbols import parse_symbol
+from src.symbols import parse_universe
 from src.timeutil import (
     ISO_DAY,
     add_days,
@@ -213,10 +213,13 @@ class BinanceKlinesCollector(BaseCollector):
         rows: list[dict[str, Any]] = []
         skipped_partial = 0
 
+        # The whole symbol list at once, so a base asset resolves exactly as it
+        # did in the universe snapshot (D-046).
+        resolved = parse_universe(raw.keys(), quote)
+
         for symbol, bars in raw.items():
-            try:
-                parsed = parse_symbol(symbol, quote)
-            except ValueError:
+            parsed = resolved.get(symbol)
+            if parsed is None:
                 continue
 
             for bar in bars:
@@ -277,8 +280,9 @@ class BinanceKlinesCollector(BaseCollector):
                 "be read later as the day's true excursion",
             )
 
-        # Both contracts now report the same per-token price, so a duplicate
-        # is a genuine ambiguity rather than a scale error. Keep one.
+        # Colliding contracts no longer share a base (D-046), so a duplicate key
+        # here means two bars for one symbol. Kept as a guard: price_daily is
+        # keyed on (date, base_asset) and must never receive two rows for one.
         return self._resolve_multiplier_conflicts(rows)
 
     def _resolve_multiplier_conflicts(
@@ -301,7 +305,7 @@ class BinanceKlinesCollector(BaseCollector):
             self.log.info(
                 "klines_multiplier_conflicts_resolved",
                 bars=conflicts,
-                rule="kept the unmultiplied contract's price",
+                rule="kept the bar with more quote volume",
             )
         return list(by_key.values())
 

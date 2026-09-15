@@ -29,7 +29,11 @@ from src.db.writes import upsert
 from src.events.features import load_known_events
 from src.report import daily
 from src.screening.layer1_kill import AssetSnapshot, Layer1Screener
-from src.screening.pipeline import _latest_holders, compute_dark_checks
+from src.screening.pipeline import (
+    _latest_holders,
+    _one_contract_per_asset,
+    compute_dark_checks,
+)
 from tests.conftest import load_fixture
 
 AS_OF = datetime(2026, 9, 13, 3, 0, 0, tzinfo=timezone.utc)
@@ -41,6 +45,28 @@ THRESHOLD = CONFIG.thresholds.layer1.top10_holder_share_fail
 
 AERO_VOTING_ESCROW = "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4"
 DEAD = "0x000000000000000000000000000000000000dead"
+
+
+class TestOneContractPerAsset:
+    """D-046. A universe snapshot written before the collision fix holds
+    BOBUSDT and 1000000BOBUSDT both as BOB. The screen keys every lookup on
+    base_asset, so one contract's verdict would overwrite the other's."""
+
+    def test_the_unmultiplied_contract_is_kept(self):
+        rows = [
+            {"symbol": "1000000BOBUSDT", "base_asset": "BOB", "price_multiplier": 1000000},
+            {"symbol": "BOBUSDT", "base_asset": "BOB", "price_multiplier": 1},
+            {"symbol": "BTCUSDT", "base_asset": "BTC", "price_multiplier": 1},
+        ]
+        kept = _one_contract_per_asset(rows)
+        assert sorted(r["symbol"] for r in kept) == ["BOBUSDT", "BTCUSDT"]
+
+    def test_a_clean_universe_is_untouched(self):
+        rows = [
+            {"symbol": "BTCUSDT", "base_asset": "BTC", "price_multiplier": 1},
+            {"symbol": "1000PEPEUSDT", "base_asset": "PEPE", "price_multiplier": 1000},
+        ]
+        assert _one_contract_per_asset(rows) == rows
 
 
 def goplus_entry(name: str) -> dict:

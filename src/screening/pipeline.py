@@ -87,6 +87,7 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
     )
     if not universe:
         return []
+    universe = _one_contract_per_asset(universe)
 
     market = _index_by_asset(db, "market_snapshot", run_date)
     spot = _index_by_asset(db, "spot_snapshot", run_date, key="base_asset")
@@ -139,6 +140,37 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
             )
         )
     return snapshots
+
+
+def _one_contract_per_asset(universe: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One contract per base asset, preferring the unmultiplied one.
+
+    Universe snapshots written before D-046 can hold two contracts under one
+    base (BOBUSDT and 1000000BOBUSDT were both BOB). Every lookup below is
+    keyed on base_asset, so the second would silently overwrite the first.
+    """
+    chosen: dict[str, dict[str, Any]] = {}
+    for row in universe:
+        asset = row["base_asset"]
+        current = chosen.get(asset)
+        if current is None:
+            chosen[asset] = row
+            continue
+        keep = (
+            row
+            if (row.get("price_multiplier") or 1) < (current.get("price_multiplier") or 1)
+            else current
+        )
+        drop = current if keep is row else row
+        log.warning(
+            "duplicate_base_asset",
+            asset=asset,
+            kept=keep["symbol"],
+            dropped=drop["symbol"],
+            rule="the unmultiplied contract is kept (D-046)",
+        )
+        chosen[asset] = keep
+    return list(chosen.values())
 
 
 def _latest_holders(db: Database, run_date: str) -> dict[str, dict[str, Any]]:

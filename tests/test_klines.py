@@ -55,18 +55,21 @@ class TestDeMultiplication:
         rows = collector.transform({"BTCUSDT": [bar("2026-06-01", c=78_000.0)]}, AS_OF)
         assert rows[0]["close_usd"] == pytest.approx(78_000.0)
 
-    def test_duplicate_days_keep_the_deeper_market(self, collector):
-        """Both contracts are de-multiplied, so a duplicate is a genuine
-        ambiguity: prefer the one with more real trading."""
+    def test_colliding_contracts_are_kept_apart(self, collector):
+        """D-046. A plain and a multiplied contract sharing a stripped base are
+        different tokens (BOB and 1000000BOB were), so neither may overwrite
+        the other in price_daily."""
         rows = collector.transform(
             {
-                "1000PEPEUSDT": [bar("2026-06-01", c=3.5, quote_volume=100.0)],
-                "PEPEUSDT": [bar("2026-06-01", c=0.0035, quote_volume=9_000.0)],
+                "1000000BOBUSDT": [bar("2026-06-01", c=0.018, quote_volume=100.0)],
+                "BOBUSDT": [bar("2026-06-01", c=0.02, quote_volume=9_000.0)],
             },
             AS_OF,
         )
-        assert len(rows) == 1
-        assert rows[0]["volume_usd"] == pytest.approx(9_000.0)
+        by_asset = {r["base_asset"]: r for r in rows}
+        assert set(by_asset) == {"BOB", "1000000BOB"}
+        assert by_asset["1000000BOB"]["close_usd"] == pytest.approx(0.018)
+        assert by_asset["BOB"]["close_usd"] == pytest.approx(0.02)
 
 
 class TestPartialBars:

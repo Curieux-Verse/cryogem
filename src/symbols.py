@@ -22,11 +22,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 # Multipliers Binance actually uses as a symbol prefix. Matching a general
 # leading-digits pattern would corrupt real tickers that begin with a number.
-_KNOWN_MULTIPLIER_PREFIXES = ("1000000", "100000", "10000", "1000")
+# Longest first, so '1000000' is tried before '1000'. '1M' is Binance's short
+# form for a million (1MBABYDOGEUSDT); without it the base kept its prefix and
+# never matched a market-cap source.
+_KNOWN_MULTIPLIER_PREFIXES: tuple[tuple[str, int], ...] = (
+    ("1000000", 1_000_000),
+    ("100000", 100_000),
+    ("10000", 10_000),
+    ("1000", 1_000),
+    ("1M", 1_000_000),
+)
 
 # Quote assets we may encounter. Ordered longest-first so 'USDC' is stripped
 # before a shorter suffix could partially match.
@@ -97,9 +107,9 @@ def parse_symbol(symbol: str, quote_asset: str | None = None) -> ParsedSymbol:
                 break
 
     multiplier = 1
-    for prefix in _KNOWN_MULTIPLIER_PREFIXES:
+    for prefix, value in _KNOWN_MULTIPLIER_PREFIXES:
         if base.startswith(prefix) and len(base) > len(prefix):
-            multiplier = int(prefix)
+            multiplier = value
             base = base[len(prefix) :]
             break
 
@@ -114,6 +124,61 @@ def parse_symbol(symbol: str, quote_asset: str | None = None) -> ParsedSymbol:
 def base_asset_of(symbol: str, quote_asset: str | None = None) -> str:
     """Convenience wrapper: just the normalised base asset."""
     return parse_symbol(symbol, quote_asset).base_asset
+
+
+def resolve_collisions(parsed: Iterable[ParsedSymbol]) -> dict[str, ParsedSymbol]:
+    """Make base assets unique across one venue's symbol list. Keyed by symbol.
+
+    Stripping a multiplier is safe only while nothing else in the list reduces
+    to the same name. Observed 2026-09-09: BOBUSDT (Build on Bitcoin) and
+    1000000BOBUSDT (an unrelated meme coin) both reduced to BOB, and every
+    table keyed on base_asset mixed them -- price_daily held the meme coin's
+    price beside the other token's market cap (D-046).
+
+    On a collision every MULTIPLIED contract keeps its prefix as its base
+    (1000000BOB, multiplier 1); an unmultiplied contract keeps the plain name.
+    The prefixed base matches no market-cap source and fails L1_NO_MCAP, which
+    is the honest outcome: nothing here can say which token it is.
+    """
+    items = list(parsed)
+    owners: dict[str, int] = {}
+    for p in items:
+        owners[p.base_asset] = owners.get(p.base_asset, 0) + 1
+
+    out: dict[str, ParsedSymbol] = {}
+    for p in items:
+        if p.is_multiplied and owners[p.base_asset] > 1:
+            unstripped = (
+                p.symbol[: -len(p.quote_asset)]
+                if p.quote_asset and p.symbol.endswith(p.quote_asset)
+                else p.symbol
+            )
+            p = ParsedSymbol(
+                symbol=p.symbol,
+                base_asset=unstripped,
+                quote_asset=p.quote_asset,
+                price_multiplier=1,
+            )
+        out[p.symbol] = p
+    return out
+
+
+def parse_universe(
+    symbols: Iterable[str], quote_asset: str | None = None
+) -> dict[str, ParsedSymbol]:
+    """Parse a venue's whole symbol list at once, collisions resolved.
+
+    Keyed by the symbol exactly as passed in. Unparseable symbols are left out;
+    a caller that must report them parses individually first.
+    """
+    parsed: dict[str, ParsedSymbol] = {}
+    for symbol in symbols:
+        try:
+            parsed[symbol] = parse_symbol(symbol, quote_asset)
+        except ValueError:
+            continue
+    resolved = resolve_collisions(parsed.values())
+    return {symbol: resolved[p.symbol] for symbol, p in parsed.items()}
 
 
 def funding_apr(rate: float, interval_hours: float) -> float:
@@ -137,4 +202,11 @@ def funding_apr(rate: float, interval_hours: float) -> float:
     return float(rate) * periods_per_year
 
 
-__all__ = ["ParsedSymbol", "base_asset_of", "funding_apr", "parse_symbol"]
+__all__ = [
+    "ParsedSymbol",
+    "base_asset_of",
+    "funding_apr",
+    "parse_symbol",
+    "parse_universe",
+    "resolve_collisions",
+]

@@ -35,7 +35,13 @@ from typing import Any
 from src.collectors.base import BaseCollector
 from src.db.connection import get_db
 from src.db.writes import upsert
-from src.symbols import funding_apr, parse_symbol
+from src.symbols import (
+    ParsedSymbol,
+    funding_apr,
+    parse_symbol,
+    parse_universe,
+    resolve_collisions,
+)
 from src.timeutil import format_day, format_instant, from_millis, utc_now, utc_now_iso
 
 
@@ -83,6 +89,20 @@ def derive_funding_interval_hours(funding_history: list[dict]) -> float | None:
     return float(modal) if count >= len(plausible) * 0.6 else None
 
 
+def is_screenable_perp(entry: dict, quote_asset: str) -> bool:
+    """A perpetual on a single token, in our quote asset.
+
+    Index perps (BTCDOMUSDT, underlyingType INDEX) track a basket, not a token:
+    no market cap, supply or holders exist for them, so every check would be
+    answering a question that does not apply (D-046).
+    """
+    return (
+        entry.get("contractType") == "PERPETUAL"
+        and entry.get("quoteAsset") == quote_asset
+        and entry.get("underlyingType") != "INDEX"
+    )
+
+
 class BinanceUniverseCollector(BaseCollector):
     """Daily snapshot of every Binance USD-M perpetual, plus funding intervals.
 
@@ -99,12 +119,8 @@ class BinanceUniverseCollector(BaseCollector):
         base = self.config.settings.endpoints["binance_futures"]
         async with self.client(base) as client:
             info = await self.request_json(client, "GET", "/fapi/v1/exchangeInfo")
-            symbols = [
-                s
-                for s in info.get("symbols", [])
-                if s.get("contractType") == "PERPETUAL"
-                and s.get("quoteAsset") == self.config.settings.universe.quote_asset
-            ]
+            quote = self.config.settings.universe.quote_asset
+            symbols = [s for s in info.get("symbols", []) if is_screenable_perp(s, quote)]
             if not symbols:
                 raise RuntimeError(
                     "exchangeInfo returned no USDT perpetuals. The endpoint shape "
@@ -147,12 +163,26 @@ class BinanceUniverseCollector(BaseCollector):
         snapshot_date = format_day(as_of)
         rows: list[dict[str, Any]] = []
 
+        parsed_entries: list[tuple[dict, ParsedSymbol]] = []
         for entry in raw["symbols"]:
             try:
-                parsed = parse_symbol(entry["symbol"], entry.get("quoteAsset"))
+                parsed_entries.append(
+                    (entry, parse_symbol(entry["symbol"], entry.get("quoteAsset")))
+                )
             except ValueError as exc:
                 self.warn("unparseable_symbol", symbol=entry.get("symbol"), error=str(exc))
-                continue
+        resolved = resolve_collisions(p for _, p in parsed_entries)
+
+        for entry, stripped in parsed_entries:
+            parsed = resolved[stripped.symbol]
+            if parsed.base_asset != stripped.base_asset:
+                self.log.warning(
+                    "base_asset_collision",
+                    symbol=parsed.symbol,
+                    base_asset=parsed.base_asset,
+                    would_have_been=stripped.base_asset,
+                    rule="a multiplied contract keeps its prefix when its base is taken (D-046)",
+                )
 
             onboard = entry.get("onboardDate")
             rows.append(
@@ -265,14 +295,17 @@ class BinanceDerivativesCollector(BaseCollector):
             if t.get("symbol") in wanted
         }
 
+        # The whole polled list at once, so a base asset resolves exactly as it
+        # did in the universe snapshot (D-046).
+        resolved = parse_universe(sorted(wanted), self.config.settings.universe.quote_asset)
+
         rows: list[dict[str, Any]] = []
         for entry in raw["premium"]:
             symbol = entry.get("symbol")
             if symbol not in wanted:
                 continue
-            try:
-                parsed = parse_symbol(symbol, self.config.settings.universe.quote_asset)
-            except ValueError:
+            parsed = resolved.get(symbol)
+            if parsed is None:
                 continue
 
             mark = _f(entry.get("markPrice"))
@@ -346,13 +379,13 @@ class BinanceSpotCollector(BaseCollector):
         quote = self.config.settings.universe.quote_asset
         rows: list[dict[str, Any]] = []
 
+        resolved = parse_universe(
+            [e.get("symbol", "") for e in raw if e.get("symbol", "").endswith(quote)], quote
+        )
         for entry in raw:
             symbol = entry.get("symbol", "")
-            if not symbol.endswith(quote):
-                continue
-            try:
-                parsed = parse_symbol(symbol, quote)
-            except ValueError:
+            parsed = resolved.get(symbol)
+            if parsed is None:
                 continue
             rows.append(
                 {

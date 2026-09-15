@@ -16,11 +16,12 @@ from src.collectors.binance import (
     BinanceSpotCollector,
     BinanceUniverseCollector,
     derive_funding_interval_hours,
+    is_screenable_perp,
 )
 from src.collectors.coingecko import CoinGeckoCollector
 from src.collectors.defillama import DefiLlamaCollector
 from src.collectors.hyperliquid import HyperliquidCollector
-from src.symbols import funding_apr, parse_symbol
+from src.symbols import funding_apr, parse_symbol, parse_universe
 from tests.conftest import load_fixture
 
 AS_OF = datetime(2026, 9, 9, 3, 12, 0, tzinfo=timezone.utc)
@@ -35,6 +36,7 @@ class TestSymbolNormalisation:
             ("1000PEPEUSDT", "PEPE", 1000),
             ("1000SHIBUSDT", "SHIB", 1000),
             ("1000000MOGUSDT", "MOG", 1000000),
+            ("1MBABYDOGEUSDT", "BABYDOGE", 1000000),
             ("BTCUSDT", "BTC", 1),
             ("ETHUSDT", "ETH", 1),
         ],
@@ -51,6 +53,35 @@ class TestSymbolNormalisation:
     def test_garbage_rejected(self):
         with pytest.raises(ValueError):
             parse_symbol("not a symbol!")
+
+
+class TestBaseAssetCollisions:
+    """D-046. BOBUSDT and 1000000BOBUSDT are different tokens that both reduced
+    to BOB, mixing two price series and two market caps under one key."""
+
+    def test_multiplied_contract_keeps_its_prefix_when_the_plain_name_is_taken(self):
+        resolved = parse_universe(["BOBUSDT", "1000000BOBUSDT"], "USDT")
+        assert resolved["BOBUSDT"].base_asset == "BOB"
+        assert resolved["1000000BOBUSDT"].base_asset == "1000000BOB"
+        assert resolved["1000000BOBUSDT"].price_multiplier == 1
+
+    def test_no_collision_leaves_the_prefix_stripped(self):
+        resolved = parse_universe(["1000PEPEUSDT", "BTCUSDT"], "USDT")
+        assert resolved["1000PEPEUSDT"].base_asset == "PEPE"
+        assert resolved["1000PEPEUSDT"].price_multiplier == 1000
+
+    def test_two_multiplied_contracts_both_keep_their_prefix(self):
+        resolved = parse_universe(["1000XUSDT", "1000000XUSDT"], "USDT")
+        assert {p.base_asset for p in resolved.values()} == {"1000X", "1000000X"}
+
+    def test_unparseable_symbols_are_left_out(self):
+        assert parse_universe(["USDT", "BTCUSDT"], "USDT").keys() == {"BTCUSDT"}
+
+    def test_index_perps_are_not_screenable(self):
+        dom = {"contractType": "PERPETUAL", "quoteAsset": "USDT", "underlyingType": "INDEX"}
+        coin = {"contractType": "PERPETUAL", "quoteAsset": "USDT", "underlyingType": "COIN"}
+        assert not is_screenable_perp(dom, "USDT")
+        assert is_screenable_perp(coin, "USDT")
 
 
 class TestFundingNormalisation:
@@ -106,6 +137,15 @@ class TestBinanceUniverse:
         pepe = next(r for r in rows if r["symbol"] == "1000PEPEUSDT")
         assert pepe["base_asset"] == "PEPE"
         assert pepe["price_multiplier"] == 1000
+
+    def test_colliding_contracts_get_distinct_base_assets(self):
+        collector = BinanceUniverseCollector()
+        symbols = [
+            {"symbol": s, "quoteAsset": "USDT", "contractType": "PERPETUAL", "status": "TRADING"}
+            for s in ("BOBUSDT", "1000000BOBUSDT")
+        ]
+        rows = collector.transform({"symbols": symbols, "intervals": {}}, AS_OF)
+        assert sorted(r["base_asset"] for r in rows) == ["1000000BOB", "BOB"]
 
     def test_onboard_date_is_iso_not_epoch_millis(self):
         collector = BinanceUniverseCollector()

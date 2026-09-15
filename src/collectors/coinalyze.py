@@ -39,7 +39,7 @@ from typing import Any
 from src.collectors.base import BaseCollector
 from src.db.connection import get_db
 from src.db.writes import upsert
-from src.symbols import parse_symbol
+from src.symbols import parse_universe
 from src.timeutil import format_day, millis_from, utc_now_iso
 
 
@@ -122,13 +122,17 @@ class CoinalyzeLiquidationCollector(BaseCollector):
         snapshot_date = format_day(as_of)
         rows: list[dict[str, Any]] = []
 
+        exchange_symbols = {key: str(key).split("_PERP")[0] for key in raw if key}
+        resolved = parse_universe(
+            exchange_symbols.values(), self.config.settings.universe.quote_asset
+        )
+
         for coinalyze_symbol, entry in raw.items():
             if not coinalyze_symbol:
                 continue
-            exchange_symbol = str(coinalyze_symbol).split("_PERP")[0]
-            try:
-                parsed = parse_symbol(exchange_symbol, self.config.settings.universe.quote_asset)
-            except ValueError:
+            exchange_symbol = exchange_symbols[coinalyze_symbol]
+            parsed = resolved.get(exchange_symbol)
+            if parsed is None:
                 continue
 
             history = entry.get("history") or []
