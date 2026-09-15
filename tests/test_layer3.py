@@ -241,16 +241,19 @@ class TestInvalidation:
         closes, highs = descending_series()
         bars = bars_from(closes, highs=highs, lows=[c - 2 for c in closes])
         # Break, then keep price above the line so the setup is live.
-        for i in range(50, 60):
+        # Recent enough to be a setup. The old version broke 9 bars back, past
+        # the 8-bar window, so it was always stale and the assertions sat inside
+        # an `if` that never ran.
+        for i in range(55, 60):
             bars.iloc[i, bars.columns.get_loc("close")] = 200.0
             bars.iloc[i, bars.columns.get_loc("high")] = 205.0
             bars.iloc[i, bars.columns.get_loc("low")] = 195.0
         _seed_prices(db, "AAA", bars)
 
         result = l3.analyse(db, "AAA", "2025-03-01", timeframe="1W")
-        if result.setup_detected:
-            assert result.invalidation_price is not None
-            assert result.invalidation_price > 0
+        assert result.setup_detected is True, result.notes
+        assert result.invalidation_price is not None
+        assert 0 < result.invalidation_price < 200.0
 
     def test_a_setup_whose_stop_is_above_price_is_refused(self, db):
         """Reporting it live would hand the reader a negative-risk trade."""
@@ -319,6 +322,21 @@ class TestPointInTime:
         # The bar's high must come from its own week, not a later one.
         assert weekly["high"].iloc[0] == frame["high"].iloc[:7].max()
 
+    def test_a_bar_still_forming_on_as_of_is_dropped(self, db):
+        """D-060. On a Wednesday the weekly bar that opened on Monday holds two days."""
+        frame = bars_from(closes=list(range(10)), start="2026-01-05", freq="1D")  # Mon..Wed
+        weekly = l3.resample(frame, "1W", as_of="2026-01-14")
+        assert [d.strftime("%Y-%m-%d") for d in weekly.index] == ["2026-01-05"]
+        # Without as_of nothing is dropped: the caller decides what "now" is.
+        assert len(l3.resample(frame, "1W")) == 2
+
+    def test_3d_bar_boundaries_do_not_move_with_the_window_start(self, db):
+        """D-060. Anchored to the first day loaded, every boundary shifted daily."""
+        frame = bars_from(closes=list(range(30)), start="2026-01-01", freq="1D")
+        full = l3.resample(frame, "3D")
+        shifted = l3.resample(frame.iloc[1:], "3D")
+        assert set(full.index[1:]) <= set(shifted.index)
+
     def test_an_unsupported_timeframe_raises(self, db):
         frame = bars_from(closes=list(range(10)))
         with pytest.raises(ValueError, match="unsupported timeframe"):
@@ -333,14 +351,21 @@ class TestPositioningRisk:
         """TRB: negative funding was read as bullish crowd positioning hours
         before a 78% collapse. Funding's formula has a structural positive
         bias, so a low reading is a STRONG signal -- of crowding, not
-        direction."""
+        direction.
+
+        The earlier version stamped rows with timestamps that did not sort in
+        insertion order, so the -0.50 reading was never the latest; it only
+        asserted a non-None percentile and then grepped this module's source.
+        """
+        start = pd.Timestamp("2026-05-01T00:00:00Z")
         rows = []
         for i in range(40):
-            # A long flat history, then today far below all of it.
+            # A long flat history, then the newest reading far below all of it.
+            stamp = (start + pd.Timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
             apr = 0.10 if i < 39 else -0.50
             rows.append(
                 {
-                    "ts_utc": f"2026-05-{(i % 28) + 1:02d}T{i % 24:02d}:00:00Z",
+                    "ts_utc": stamp,
                     "exchange": "binance",
                     "symbol": "AAAUSDT",
                     "base_asset": "AAA",
@@ -348,22 +373,49 @@ class TestPositioningRisk:
                     "funding_interval_hours": 8.0,
                     "funding_apr": apr,
                     "open_interest_usd": 1e6,
-                    "fetched_at_utc": f"2026-05-{(i % 28) + 1:02d}T00:00:00Z",
+                    "fetched_at_utc": stamp,
                 }
             )
         upsert(db, "derivatives_snapshot", rows)
+        closes, highs = descending_series()
+        _seed_prices(db, "AAA", bars_from(closes, highs=highs))
         db.commit()
 
-        pctile = l3.funding_percentile(db, "AAA", "2026-06-01")
-        assert pctile is not None
+        # The newest of 40 readings is the lowest: the bottom 2.5% of its history.
+        assert l3.funding_percentile(db, "AAA", "2026-06-01") == pytest.approx(2.5)
+        result = l3.analyse(db, "AAA", "2026-06-01", timeframe="1W")
+        assert "L3_FUNDING_NEGATIVE_EXTREME" in result.risk_flags
+        assert "L3_FUNDING_POSITIVE_EXTREME" not in result.risk_flags
 
-        source = (l3.__file__ or "")
-        text = open(source, encoding="utf-8").read()
-        # The asymmetry must be stated where the flag is raised, and the flag
-        # must be a risk flag rather than a score input.
-        assert "structural positive bias" in text
-        assert "L3_FUNDING_NEGATIVE_EXTREME" in text
-        assert "score" not in text.split("L3_FUNDING_NEGATIVE_EXTREME")[1][:400].lower()
+    def test_oi_change_is_measured_in_time_on_binance_rows_only(self, db):
+        """D-060. Rows N apart were compared as 'N hours', and Hyperliquid's rows
+        sat between Binance's in the same series."""
+        start = pd.Timestamp("2026-05-30T00:00:00Z")
+
+        def row(ts, exchange, symbol, oi):
+            stamp = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+            return {
+                "ts_utc": stamp,
+                "exchange": exchange,
+                "symbol": symbol,
+                "base_asset": "AAA",
+                "open_interest_base": oi,
+                "open_interest_usd": oi,
+                "fetched_at_utc": stamp,
+            }
+
+        rows = []
+        for i in range(48):
+            ts = start + pd.Timedelta(hours=i)
+            rows.append(row(ts, "binance", "AAAUSDT", 100.0 if i < 47 else 200.0))
+            rows.append(row(ts + pd.Timedelta(minutes=30), "hyperliquid", "AAA", 1.0))
+        upsert(db, "derivatives_snapshot", rows)
+        db.commit()
+
+        out = l3.oi_change_percentiles(db, "AAA", "2026-06-01")
+        # Binance OI doubled in the last hour: the largest 1h and 24h change on file.
+        assert out["1h"] == pytest.approx(100.0)
+        assert out["24h"] == pytest.approx(100.0)
 
     def test_oi_percentiles_report_every_window(self, db):
         out = l3.oi_change_percentiles(db, "AAA", AS_OF)

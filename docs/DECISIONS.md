@@ -1599,3 +1599,29 @@ Smaller defects in the same module:
   switched the block off for every asset. The benchmark return now comes from
   price history, and a "7 days ago" price may be at most three days older than
   that.
+
+---
+
+## D-060 — Layer 3 reads closed bars, Binance derivatives, and hours as hours
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+- **Bars still forming.** Weekly bars open on Monday. On any other day the newest
+  bar held only part of its week, and a break was reported as confirmed on a
+  weekly close that had not happened. A final bar whose period has not ended by
+  `as_of` is dropped. 3D bins were anchored to the first day loaded, which moves
+  with the 1,100-day window, so every 3D boundary shifted by a day each morning;
+  they are now anchored to the epoch.
+- **Venues.** The funding and OI queries had no exchange filter. Hyperliquid's
+  hourly rows interleaved with Binance's in one series, so a "change" could
+  compare one venue's contracts with the other's, and `iloc[-1]` was whichever
+  venue sorted last. Both read Binance only.
+- **Windows.** `pct_change(periods=24)` compared rows 24 apart and called it 24
+  hours -- about 12 with two venues, about 2 on the 5-minute host tier. The
+  change is now against the reading N hours earlier, within 90 minutes, and the
+  latest reading must have one.
+
+Two Layer 3 tests could not fail and now assert what they are named for: the
+invalidation test's break was always stale, so its assertions sat inside an `if`
+that never ran; and the funding test's timestamps never put the extreme reading
+last, and it then grepped the module's own source instead of calling it.

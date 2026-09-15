@@ -128,21 +128,43 @@ class Layer3Result:
 # ==============================================================================
 # Bars
 # ==============================================================================
-def resample(daily: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+#: Calendar days in each bar, to tell a closed bar from one still forming.
+BAR_DAYS = {"3D": 3, "1W": 7}
+
+#: How far from exactly N hours earlier an OI reading may be and still count as
+#: "N hours earlier". The hourly feed drifts by minutes and occasionally skips.
+OI_LOOKBACK_TOLERANCE = pd.Timedelta(minutes=90)
+
+
+def resample(daily: pd.DataFrame, timeframe: str, as_of: str | None = None) -> pd.DataFrame:
     """Daily OHLC to 3D or weekly bars.
 
     `label='left'` and `closed='left'` so a bar is stamped with the date it
     OPENED. The alternative stamps a bar with a date after the data it
     contains, and a "break on 2026-09-14" that actually used bars through
     2026-09-20 is look-ahead bias wearing a timestamp.
+
+    With `as_of`, a final bar whose period has not ended by that day is dropped
+    (D-060). On a Wednesday the weekly bar that opened on Monday holds two days,
+    and a break "confirmed on the weekly close" read from it confirmed nothing.
+    3D bins are anchored to the epoch rather than to the first day loaded, which
+    moves with the lookback window and shifted every bar boundary each morning.
     """
     if timeframe not in TIMEFRAMES:
         raise ValueError(f"unsupported timeframe {timeframe!r}; expected one of {list(TIMEFRAMES)}")
     frame = daily.sort_index()
-    out = frame.resample(TIMEFRAMES[timeframe], label="left", closed="left").agg(
+    options: dict[str, Any] = {"label": "left", "closed": "left"}
+    if timeframe == "3D":
+        options["origin"] = "epoch"
+    out = frame.resample(TIMEFRAMES[timeframe], **options).agg(
         {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     )
-    return out.dropna(subset=["close"])
+    out = out.dropna(subset=["close"])
+    if as_of is not None and not out.empty:
+        last_day_covered = out.index[-1] + pd.Timedelta(days=BAR_DAYS[timeframe] - 1)
+        if last_day_covered > pd.Timestamp(as_of):
+            out = out.iloc[:-1]
+    return out
 
 
 def load_bars(db: Database, base_asset: str, as_of: str, days: int = 1100) -> pd.DataFrame:
@@ -434,8 +456,11 @@ def funding_percentile(db: Database, base_asset: str, as_of: str, days: int = 90
     Returns None when there is not enough history, which early in the
     project's life is the normal answer.
     """
+    # Binance only (D-060). Hyperliquid funds hourly on its own formula, and its
+    # rows interleaved with Binance's made iloc[-1] whichever venue sorted last.
     rows = db.query(
         "SELECT funding_apr FROM derivatives_snapshot WHERE base_asset = ? "
+        "AND exchange = 'binance' "
         "AND ts_utc BETWEEN ? AND ? AND funding_apr IS NOT NULL ORDER BY ts_utc",
         (base_asset, f"{add_days(as_of, -days)}T00:00:00Z", f"{as_of}T23:59:59Z"),
     )
@@ -459,7 +484,8 @@ def oi_change_percentiles(
     """
     rows = db.query(
         "SELECT ts_utc, open_interest_base, open_interest_usd FROM derivatives_snapshot "
-        "WHERE base_asset = ? AND ts_utc BETWEEN ? AND ? ORDER BY ts_utc",
+        "WHERE base_asset = ? AND exchange = 'binance' "
+        "AND ts_utc BETWEEN ? AND ? ORDER BY ts_utc",
         (base_asset, f"{add_days(as_of, -30)}T00:00:00Z", f"{as_of}T23:59:59Z"),
     )
     out: dict[str, float | None] = {f"{h}h": None for h in windows_hours}
@@ -475,10 +501,22 @@ def oi_change_percentiles(
     if len(series) < 20:
         return out
 
+    series = series[~series.index.duplicated(keep="last")]
     for hours in windows_hours:
-        change = series.pct_change(periods=max(1, hours))
+        # By TIME, not by row (D-060). pct_change(periods=24) compared rows 24
+        # apart, which on an hourly feed with gaps -- or the 5-minute host tier,
+        # or two venues in one series -- is not 24 hours. The reading N hours
+        # earlier, within a tolerance, or no reading at all.
+        earlier = series.reindex(
+            series.index - pd.Timedelta(hours=hours),
+            method="ffill",
+            tolerance=OI_LOOKBACK_TOLERANCE,
+        )
+        change = pd.Series(series.to_numpy() / earlier.to_numpy() - 1.0, index=series.index)
         change = change.replace([np.inf, -np.inf], np.nan).dropna()
-        if len(change) < 20:
+        # The percentile is of the LATEST reading; without its own lagged value
+        # there is nothing current to rank.
+        if len(change) < 20 or change.index[-1] != series.index[-1]:
             continue
         out[f"{hours}h"] = float(change.rank(pct=True).iloc[-1] * 100.0)
     return out
@@ -538,7 +576,7 @@ def analyse(db: Database, base_asset: str, as_of: str, timeframe: str = "1W") ->
         result.notes.append("no OHLC history: structure cannot be assessed")
         return result
 
-    bars = resample(daily, timeframe)
+    bars = resample(daily, timeframe, as_of=as_of)
     if len(bars) < MIN_BARS:
         result.notes.append(
             f"only {len(bars)} {timeframe} bars, need {MIN_BARS}: too little history "
