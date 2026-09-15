@@ -145,6 +145,22 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k != "_kind"}
 
 
+#: DefiLlama chain names -> CoinGecko platform keys, where the two differ. Token
+#: references arrive as '<defillama chain>:<address>' while asset_contract is
+#: keyed by CoinGecko platform, so without these, tokens on arbitrum, avax and
+#: bsc never resolved and their unlock schedules never attached (D-055).
+DEFILLAMA_CHAIN_ALIASES: dict[str, str] = {
+    "arbitrum": "arbitrum-one",
+    "avax": "avalanche",
+    "bsc": "binance-smart-chain",
+    "polygon": "polygon-pos",
+    "optimism": "optimistic-ethereum",
+    "era": "zksync",
+    "ton": "the-open-network",
+    "near": "near-protocol",
+}
+
+
 def resolve_gecko_id(
     gecko_id: Any, token: Any, contract_index: dict[str, str]
 ) -> str | None:
@@ -160,7 +176,11 @@ def resolve_gecko_id(
         return None
     if prefix == "coingecko":
         return ref
-    return contract_index.get(f"{prefix}:{ref.lower()}")
+    address = ref.lower()
+    platform = DEFILLAMA_CHAIN_ALIASES.get(prefix, prefix)
+    return contract_index.get(f"{platform}:{address}") or contract_index.get(
+        f"{prefix}:{address}"
+    )
 
 
 def plan_fetches(
@@ -345,6 +365,26 @@ def _differs(old: dict[str, Any], new: dict[str, Any]) -> bool:
     )
 
 
+#: What a revision can change, as load_known_events reads it back (D-055).
+REVISED_FIELDS = (
+    "magnitude_tokens",
+    "pct_of_circulating",
+    "recipient_type",
+    "recipient_label",
+    "confidence",
+    "retracted_utc",
+)
+
+
+def _with_revision(old: dict[str, Any], recorded_utc: str) -> str | None:
+    """revisions_json with the values about to be replaced appended, oldest first."""
+    from src.db.writes import json_dump
+
+    history = json_load(old.get("revisions_json"), []) or []
+    history.append({"recorded_utc": recorded_utc, **{f: old.get(f) for f in REVISED_FIELDS}})
+    return json_dump(history)
+
+
 def merge_events(db: Database, events: list[dict[str, Any]]) -> int:
     """Insert new events; update changed ones WITHOUT touching first_seen_utc."""
     if not events:
@@ -354,7 +394,7 @@ def merge_events(db: Database, events: list[dict[str, Any]]) -> int:
     for chunk in _chunks(ids, _IN_CHUNK):
         for row in db.query(
             "SELECT event_id, magnitude_tokens, pct_of_circulating, recipient_type, "
-            "recipient_label, confidence, retracted_utc FROM scheduled_event "
+            "recipient_label, confidence, retracted_utc, revisions_json FROM scheduled_event "
             f"WHERE event_id IN ({','.join('?' for _ in chunk)})",
             list(chunk),
         ):
@@ -365,15 +405,20 @@ def merge_events(db: Database, events: list[dict[str, Any]]) -> int:
     written = upsert(db, "scheduled_event", fresh) if fresh else 0
     if changed:
         # A reappearing event is un-retracted: it is again part of the schedule.
+        # The values being replaced go into revisions_json first, so the event
+        # can still be read as it stood before this revision (D-055).
         db.executemany(
             "UPDATE scheduled_event SET magnitude_tokens = ?, pct_of_circulating = ?, "
             "recipient_type = ?, recipient_category = ?, recipient_label = ?, description = ?, "
-            "confidence = ?, fetched_at_utc = ?, retracted_utc = NULL WHERE event_id = ?",
+            "confidence = ?, fetched_at_utc = ?, retracted_utc = NULL, revisions_json = ? "
+            "WHERE event_id = ?",
             [
                 [
                     e["magnitude_tokens"], e["pct_of_circulating"], e["recipient_type"],
                     e["recipient_category"], e["recipient_label"], e["description"],
-                    e["confidence"], e["fetched_at_utc"], e["event_id"],
+                    e["confidence"], e["fetched_at_utc"],
+                    _with_revision(existing[e["event_id"]], e["fetched_at_utc"]),
+                    e["event_id"],
                 ]
                 for e in changed
             ],
@@ -675,6 +720,8 @@ class UnlockCollector(BaseCollector):
 
 __all__ = [
     "DATASETS_SOURCE",
+    "DEFILLAMA_CHAIN_ALIASES",
+    "REVISED_FIELDS",
     "KNOWN_RECIPIENT_TYPES",
     "UNLOCK_EVENT_TYPES",
     "UnlockCollector",

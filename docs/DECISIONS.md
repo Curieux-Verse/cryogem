@@ -1490,3 +1490,41 @@ The two key kinds look alike (both begin `CG-`), so the prefix cannot choose.
 **Rule.** `universe.coingecko_plan` in `config/settings.yaml` (`demo`, the
 default, or `pro`) decides host and header. No key means keyless on the public
 host, whatever the setting.
+
+---
+
+## D-055 — An unlock revision is recorded, so the old schedule stays readable
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+`merge_events` updated a revised event in place -- size, share, recipient,
+confidence -- keeping `first_seen_utc`, and reset `retracted_utc` when an event
+reappeared. `first_seen_utc <= as_of` protects against events that did not
+exist yet, not against events that were different then: a screen dated before
+a revision saw the revised size, and a re-listed event erased its retraction.
+
+**Rule.** The update is kept (every reader expects one row per event), but the
+values it replaces are first appended to `scheduled_event.revisions_json` with
+the time they stopped being current. `load_known_events` reads each event as of
+its cutoff: values from the earliest revision recorded after the cutoff, and
+excluded if it stood retracted then. The column arrives through
+`ADDED_COLUMNS`, so the screen gets it without running `init-db`.
+
+**Also.** DefiLlama token references use its own chain names (`arbitrum`,
+`avax`, `bsc`) while `asset_contract` is keyed by CoinGecko platform
+(`arbitrum-one`, `avalanche`, `binance-smart-chain`). 17 of 372 protocols stayed
+unresolved for that reason alone. `DEFILLAMA_CHAIN_ALIASES` maps them.
+
+---
+
+## D-056 — Hyperliquid's k-prefix and its delisted assets
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+- `kPEPE` is a thousand-PEPE contract. Upper-casing the name stored base `KPEPE`
+  with multiplier 1, which matches no other source. It is now base `PEPE` with
+  multiplier 1000. Only a lower-case `k` before an upper-case name counts, so
+  `KAITO` stays `KAITO`.
+- A delisted asset stays in `meta` with `isDelisted: true`. It was written to
+  `universe_snapshot` as `TRADING`, putting it in the point-in-time universe. It
+  is now `DELISTED`.

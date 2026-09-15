@@ -90,8 +90,9 @@ def load_known_events(
     cutoff = f"{run_date}T23:59:59Z"
 
     sql = (
-        "SELECT base_asset, event_type, event_date_utc, recipient_type, "
-        "       magnitude_tokens, pct_of_circulating, confidence, first_seen_utc "
+        "SELECT base_asset, event_type, event_date_utc, recipient_type, recipient_label, "
+        "       magnitude_tokens, pct_of_circulating, confidence, first_seen_utc, "
+        "       retracted_utc, revisions_json "
         "FROM scheduled_event WHERE first_seen_utc <= ? "
         # A retracted event was knowable until it was retracted, and not after.
         "AND (retracted_utc IS NULL OR retracted_utc > ?)"
@@ -103,8 +104,32 @@ def load_known_events(
 
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in db.query(sql, params):
-        grouped.setdefault(row["base_asset"], []).append(row)
+        known = _as_known_at(dict(row), cutoff)
+        if known is not None:
+            grouped.setdefault(known["base_asset"], []).append(known)
     return grouped
+
+
+def _as_known_at(row: dict[str, Any], cutoff: str) -> dict[str, Any] | None:
+    """The event as it read at `cutoff`, or None if it stood retracted then (D-055).
+
+    A revision updates scheduled_event in place and appends the values it
+    replaced to revisions_json. Reading as of a date before a revision therefore
+    means taking the values from the earliest revision recorded after that date.
+    """
+    from src.db.writes import json_load
+
+    history = json_load(row.pop("revisions_json", None), []) or []
+    later = [r for r in history if str(r.get("recorded_utc") or "") > cutoff]
+    if later:
+        earliest = min(later, key=lambda r: str(r["recorded_utc"]))
+        for name, value in earliest.items():
+            if name != "recorded_utc":
+                row[name] = value
+    retracted = row.get("retracted_utc")
+    if retracted is not None and str(retracted) <= cutoff:
+        return None
+    return row
 
 
 def _is_major_unlock(event: dict[str, Any], min_pct: float) -> bool:

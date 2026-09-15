@@ -22,7 +22,7 @@ from src.collectors.coinalyze import CoinalyzeLiquidationCollector, previous_day
 from src.collectors.coingecko import CoinGeckoCollector, coingecko_endpoint
 from src.collectors.registry import refuse_as_of, resolve
 from src.collectors.defillama import DefiLlamaCollector
-from src.collectors.hyperliquid import HyperliquidCollector
+from src.collectors.hyperliquid import HyperliquidCollector, hyperliquid_base
 from src.config import get_config
 from src.symbols import funding_apr, parse_symbol, parse_universe
 from tests.conftest import load_fixture
@@ -162,6 +162,41 @@ class TestCoinGeckoPlan:
 
     def test_the_shipped_setting_is_the_free_demo_plan(self):
         assert get_config().settings.universe.coingecko_plan == "demo"
+
+
+class TestHyperliquidNames:
+    """D-056. kPEPE is a thousand-PEPE contract, and delisted assets stay in meta."""
+
+    @staticmethod
+    def _raw(*assets):
+        universe = [{"name": name, **flags} for name, flags in assets]
+        context = {
+            "markPx": "1.0",
+            "oraclePx": "1.0",
+            "funding": "0.00001",
+            "openInterest": "10",
+            "premium": "0",
+            "dayNtlVlm": "100",
+        }
+        return [{"universe": universe}, [dict(context) for _ in assets]]
+
+    def test_a_k_prefix_is_a_thousand_token_contract(self):
+        assert hyperliquid_base("kPEPE") == ("PEPE", 1000)
+        assert hyperliquid_base("KAITO") == ("KAITO", 1)
+        assert hyperliquid_base("BTC") == ("BTC", 1)
+
+    def test_rows_carry_the_real_base_and_multiplier(self):
+        collector = HyperliquidCollector()
+        rows = collector.transform(self._raw(("kPEPE", {}), ("BTC", {})), AS_OF)
+        assert {r["base_asset"] for r in rows} == {"PEPE", "BTC"}
+        pepe = next(r for r in collector.universe_rows if r["symbol"] == "kPEPE")
+        assert pepe["price_multiplier"] == 1000
+
+    def test_a_delisted_asset_is_not_recorded_as_trading(self):
+        collector = HyperliquidCollector()
+        collector.transform(self._raw(("OLD", {"isDelisted": True}), ("BTC", {})), AS_OF)
+        status = {r["symbol"]: r["status"] for r in collector.universe_rows}
+        assert status == {"OLD": "DELISTED", "BTC": "TRADING"}
 
 
 class TestFundingNormalisation:

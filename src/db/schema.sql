@@ -221,7 +221,10 @@ CREATE TABLE IF NOT EXISTS scheduled_event (
     source_ref          TEXT,               -- the source's own id, e.g. a DefiLlama slug
     -- Set when a later refresh no longer lists a FUTURE event. Never deleted:
     -- a backtest on a date before this must still see what was then known.
-    retracted_utc       TEXT
+    retracted_utc       TEXT,
+    -- JSON list of the values each revision replaced, oldest first. Lets an event
+    -- be read as it stood on a date before the revision (D-055).
+    revisions_json      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_event_asset_date
     ON scheduled_event(base_asset, event_date_utc);

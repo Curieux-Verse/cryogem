@@ -561,6 +561,12 @@ class TestPlanAndResolve:
         assert resolve_gecko_id("ondo-finance", "ignored:0x1", {}) == "ondo-finance"
         assert resolve_gecko_id(None, "hyperliquid:0xabc", {}) is None
 
+    def test_defillama_chain_names_resolve_through_coingecko_platform_keys(self):
+        """D-055. DefiLlama says 'arbitrum'; asset_contract is keyed 'arbitrum-one'."""
+        index = {"arbitrum-one:0x912ce59144191c1204e64559fe8253a0e49e6548": "arbitrum"}
+        token = "arbitrum:0x912CE59144191C1204E64559FE8253a0e49E6548"
+        assert resolve_gecko_id(None, token, index) == "arbitrum"
+
     def test_two_protocols_for_one_asset_do_not_double_count(self):
         cliff = [{"timestamp": ONDO_FUTURE_TS, "cliffAllocations": [{"recipient": "Team", "category": "insiders", "amount": 100}]}]
         raw = {
@@ -623,6 +629,21 @@ class TestPointInTime:
         upsert(db, "scheduled_event", [_db_event(retracted_utc="2026-09-10T00:00:00Z")])
         assert load_known_events(db, "2026-09-09")["TOK"]
         assert "TOK" not in load_known_events(db, "2026-09-11")
+
+    def test_before_a_revision_the_event_reads_as_it_did_then(self, db):
+        """D-055. The size was revised on 09-13; a screen dated 09-10 saw 100."""
+        merge_events(db, [_db_event()])
+        merge_events(db, [_db_event(magnitude_tokens=250.0, fetched_at_utc="2026-09-13T00:00:00Z")])
+        assert load_known_events(db, "2026-09-10")["TOK"][0]["magnitude_tokens"] == 100.0
+        assert load_known_events(db, "2026-09-13")["TOK"][0]["magnitude_tokens"] == 250.0
+
+    def test_an_unretraction_does_not_erase_the_retraction(self, db):
+        """D-055. Retracted on 09-05, listed again on 09-13: between the two, the
+        event was not part of any schedule anyone could have seen."""
+        upsert(db, "scheduled_event", [_db_event(retracted_utc="2026-09-05T00:00:00Z")])
+        merge_events(db, [_db_event(fetched_at_utc="2026-09-13T00:00:00Z")])
+        assert "TOK" not in load_known_events(db, "2026-09-08")
+        assert load_known_events(db, "2026-09-13")["TOK"]
 
 
 # =============================================================================

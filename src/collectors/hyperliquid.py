@@ -33,6 +33,18 @@ from src.timeutil import format_day, format_instant, utc_now_iso
 HYPERLIQUID_FUNDING_INTERVAL_HOURS = 1.0
 
 
+def hyperliquid_base(name: str) -> tuple[str, int]:
+    """(base_asset, price_multiplier) for a Hyperliquid perp name.
+
+    Hyperliquid marks a thousand-token contract with a lower-case 'k' (kPEPE,
+    kBONK). Upper-casing the whole name made the base KPEPE, which matches no
+    other source and split the asset from Binance's PEPE (D-056).
+    """
+    if len(name) > 1 and name.startswith("k") and name[1:].isupper():
+        return name[1:], 1000
+    return name.upper(), 1
+
+
 def _f(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -80,10 +92,12 @@ class HyperliquidCollector(BaseCollector):
             )
 
         rows: list[dict[str, Any]] = []
+        universe_rows: list[dict[str, Any]] = []
         for asset, ctx in zip(universe, contexts):
             name = asset.get("name")
             if not name:
                 continue
+            base, multiplier = hyperliquid_base(str(name))
             mark = _f(ctx.get("markPx"))
             oracle = _f(ctx.get("oraclePx"))
             rate = _f(ctx.get("funding"))
@@ -94,7 +108,7 @@ class HyperliquidCollector(BaseCollector):
                     "ts_utc": ts,
                     "exchange": "hyperliquid",
                     "symbol": name,
-                    "base_asset": str(name).upper(),
+                    "base_asset": base,
                     "mark_price": mark,
                     "index_price": oracle,
                     "open_interest_base": oi,
@@ -112,6 +126,25 @@ class HyperliquidCollector(BaseCollector):
                     "fetched_at_utc": fetched_at,
                 }
             )
+            universe_rows.append(
+                {
+                    "snapshot_date": ts[:10],
+                    "exchange": "hyperliquid",
+                    "symbol": name,
+                    "base_asset": base,
+                    "quote_asset": "USD",
+                    "contract_type": "PERPETUAL",
+                    # A delisted asset stays in meta, flagged. Recorded as TRADING
+                    # it would sit in the point-in-time universe (D-056).
+                    "status": "DELISTED" if asset.get("isDelisted") else "TRADING",
+                    "price_multiplier": multiplier,
+                    "funding_interval_hours": HYPERLIQUID_FUNDING_INTERVAL_HOURS,
+                    "fetched_at_utc": fetched_at,
+                }
+            )
+        #: The universe rows for write(). Built here because the delisted flag
+        #: lives in the raw payload, which write() never sees.
+        self.universe_rows = universe_rows
         return rows
 
     def write(self, rows: list[dict[str, Any]]) -> int:
@@ -119,28 +152,8 @@ class HyperliquidCollector(BaseCollector):
             written = upsert(db, "derivatives_snapshot", rows)
             # Hyperliquid is also a universe in its own right. Recording it
             # keeps the point-in-time symbol list complete across venues.
-            snapshot_date = rows[0]["ts_utc"][:10] if rows else None
-            if snapshot_date:
-                upsert(
-                    db,
-                    "universe_snapshot",
-                    [
-                        {
-                            "snapshot_date": snapshot_date,
-                            "exchange": "hyperliquid",
-                            "symbol": r["symbol"],
-                            "base_asset": r["base_asset"],
-                            "quote_asset": "USD",
-                            "contract_type": "PERPETUAL",
-                            "status": "TRADING",
-                            "price_multiplier": 1,
-                            "funding_interval_hours": HYPERLIQUID_FUNDING_INTERVAL_HOURS,
-                            "fetched_at_utc": r["fetched_at_utc"],
-                        }
-                        for r in rows
-                    ],
-                )
+            upsert(db, "universe_snapshot", getattr(self, "universe_rows", []))
             return written
 
 
-__all__ = ["HYPERLIQUID_FUNDING_INTERVAL_HOURS", "HyperliquidCollector"]
+__all__ = ["HYPERLIQUID_FUNDING_INTERVAL_HOURS", "HyperliquidCollector", "hyperliquid_base"]
