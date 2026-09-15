@@ -110,11 +110,14 @@ class TestWeightRenormalisation:
         # Renormalisation keeps them comparable on the blocks they share.
         assert scored.loc["HASNT", "total_score"] > 0.0
 
-    def test_blocks_available_is_recorded(self):
+    def test_blocks_available_counts_exactly_the_measured_blocks(self):
+        """The old assertion (>= 1 and <= 6) could not fail. The fixture measures
+        supply (float), events (a schedule with no cliff) and drawdown (ATH);
+        fundamental, sector (unclassified) and attention are unmeasured."""
         df = frame(["A", "B", "C"])
         scored = Layer2Scorer(RUN_DATE).score(df)
-        assert (scored["blocks_available"] >= 1).all()
-        assert (scored["blocks_available"] <= len(BLOCKS)).all()
+        assert (scored["blocks_available"] == 3).all()
+        assert len(BLOCKS) == 6
 
     def test_rank_is_dense_and_starts_at_one(self):
         df = frame(["A", "B", "C", "D"])
@@ -138,20 +141,43 @@ class TestBlockBehaviour:
         assert scored.loc["CLEARED", "supply"] > scored.loc["PENDING", "supply"]
 
     def test_monitoring_tag_is_a_strong_negative(self):
-        df = frame(["TAGGED", "CLEAN"])
+        df = frame(["TAGGED", "CLEAN", "OTHER"])
+        df["days_to_next_major_unlock"] = [40, 40, 90]
         df.loc["TAGGED", "monitoring_tag_active"] = True
         scored = Layer2Scorer(RUN_DATE).score(df)
-        assert scored.loc["TAGGED", "events"] < scored.loc["CLEAN", "events"]
+        assert scored.loc["TAGGED", "events"] == 0.0
+        assert scored.loc["CLEAN", "events"] > 0.0
 
     def test_attention_is_gated_to_extremes(self):
         """|z| below the gate contributes nothing rather than contributing noise."""
-        df = frame(["MID", "EXTREME"])
-        df.loc["MID", "social_volume_z"] = 0.5
-        df.loc["EXTREME", "social_volume_z"] = 4.0
+        df = frame(["MID", "E1", "E2", "E3"])
+        df["social_volume_z"] = [0.5, 5.0, 4.5, 4.0]
         scorer = Layer2Scorer(RUN_DATE)
         _, metrics = scorer.score_attention(df)
         assert pd.isna(metrics["social_volume_z"]["MID"]), "middle of the distribution is gated out"
-        assert pd.notna(metrics["social_volume_z"]["EXTREME"])
+        assert metrics["social_volume_z"][["E1", "E2", "E3"]].notna().all()
+
+    def test_a_lone_extreme_is_not_ranked_against_nobody(self):
+        """D-059. One asset past the gate ranked first of one and scored 100."""
+        df = frame(["MID", "EXTREME"])
+        df["social_volume_z"] = [0.5, 5.0]
+        _, metrics = Layer2Scorer(RUN_DATE).score_attention(df)
+        assert metrics["social_volume_z"].isna().all()
+
+    def test_a_loss_maker_is_not_the_cheapest_on_price_to_sales(self):
+        """D-059. A negative revenue gave a negative P/S, which ranked cheapest."""
+        df = frame(["LOSS", "A", "B"], has_fundamentals=1)
+        df["revenue_annualised"] = [-5e6, 10e6, 20e6]
+        _, metrics = Layer2Scorer(RUN_DATE).score_fundamental(df)
+        assert pd.isna(metrics["price_to_sales"]["LOSS"])
+        assert metrics["price_to_sales"][["A", "B"]].notna().all()
+
+    def test_a_missing_ath_is_no_drawdown_score_rather_than_zero(self):
+        """D-059. The overhang interaction always counted as measured, so no ATH scored 0."""
+        df = frame(["NOATH", "A", "B"])
+        df.loc["NOATH", "pct_below_ath"] = np.nan
+        scored = Layer2Scorer(RUN_DATE).score(df)
+        assert pd.isna(scored.loc["NOATH", "drawdown"])
 
     def test_team_controlled_stake_is_discounted(self):
         """Staked supply reduces float only if it is not the team's own stake."""
@@ -218,15 +244,16 @@ class TestMissingUnlockDataIsNotGoodNews:
         unlock = metrics["days_to_next_unlock"]
         assert unlock["CLEAR"] > unlock["CLIFF"]
 
-    def test_weight_redistributes_rather_than_zeroing(self):
-        """The unmeasured asset's events block is built from the rest."""
+    def test_an_asset_with_no_event_data_has_no_events_score(self):
+        """D-059. The catalyst and monitoring flags were filled with False and
+        counted as measured, so an asset we knew nothing about scored 50 on
+        events. With nothing known the block is None, and its weight moves to
+        the blocks that were measured."""
         df = frame(["UNKNOWN"])
         df.loc["UNKNOWN", "has_unlock_record"] = False
         scored = Layer2Scorer(RUN_DATE).score(df)
-        # Still a real number: monitoring_tag and the catalyst flags were
-        # measured, so the block is not None -- but it is not 100 either.
-        assert pd.notna(scored.loc["UNKNOWN", "events"])
-        assert scored.loc["UNKNOWN", "events"] < 100.0
+        assert pd.isna(scored.loc["UNKNOWN", "events"])
+        assert pd.notna(scored.loc["UNKNOWN", "total_score"])
 
 
 class TestSectorRelativeStrengthNeedsItsBenchmark:
@@ -259,3 +286,13 @@ class TestSectorRelativeStrengthNeedsItsBenchmark:
         _, metrics = Layer2Scorer(RUN_DATE).score_sector(df)
         for window in ("7d", "30d"):
             assert metrics[f"sector_rs_{window}"].isna().all()
+
+    def test_the_benchmark_need_not_be_a_survivor(self):
+        """D-059. BTC failing Layer 1 must not switch the block off for every asset."""
+        df = frame(self.MEMBERS)
+        df["return_7d"] = [0.10, 0.20, 0.30]
+        df["return_30d"] = [0.10, 0.20, 0.30]
+        df.attrs.update(benchmark_return_7d=0.05, benchmark_return_30d=0.05)
+        _, metrics = Layer2Scorer(RUN_DATE).score_sector(df)
+        for window in ("7d", "30d"):
+            assert metrics[f"sector_rs_{window}"][self.MEMBERS].notna().all()

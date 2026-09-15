@@ -52,8 +52,14 @@ log = get_logger("screening.layer2")
 
 BLOCKS = ("fundamental", "supply", "sector", "events", "attention", "drawdown")
 
+#: Fewest assets past the attention gate before any of them is ranked. One asset
+#: past the gate ranked first of one and scored 100 (D-059).
+MIN_GATED_EXTREMES = 3
 
-def cross_sectional_percentile(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
+
+def cross_sectional_percentile(
+    series: pd.Series, higher_is_better: bool = True, min_count: int = 1
+) -> pd.Series:
     """Rank 0-100 within today's universe.
 
     NaN-safe and deliberately so: a NaN stays NaN and must NOT become 0. An
@@ -62,6 +68,9 @@ def cross_sectional_percentile(series: pd.Series, higher_is_better: bool = True)
     a bias against anything with incomplete data.
     """
     numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().sum() < min_count:
+        # Too few measured values for an ordering to mean anything.
+        return pd.Series(np.nan, index=series.index, dtype=float)
     if not higher_is_better:
         numeric = -numeric
     return numeric.rank(pct=True, na_option="keep") * 100.0
@@ -108,8 +117,11 @@ class Layer2Scorer:
         acceleration = df["fees_7d_usd"] / (df["fees_30d_usd"] / 4.0).replace(0, np.nan)
         metrics["fee_acceleration"] = cross_sectional_percentile(acceleration)
 
-        # Price-to-sales: LOWER is better, so the rank is inverted.
-        ps_ratio = df["market_cap_usd"] / df["revenue_annualised"].replace(0, np.nan)
+        # Price-to-sales: LOWER is better, so the rank is inverted. Only for
+        # positive revenue: a loss-maker's negative ratio ranked as the cheapest
+        # asset in the universe (D-059).
+        revenue = df["revenue_annualised"]
+        ps_ratio = df["market_cap_usd"] / revenue.where(revenue > 0)
         metrics["price_to_sales"] = cross_sectional_percentile(ps_ratio, higher_is_better=False)
 
         # TVL is a CAPITAL SNAPSHOT, not activity: it rises when prices rise
@@ -202,7 +214,13 @@ class Layer2Scorer:
             # metric scores None, the block renormalises across whatever else
             # was measured, and nothing pretends to be a BTC comparison that
             # is not one.
-            benchmark = returns.get(self.sectors.benchmark_asset, np.nan)
+            # From price history, not the survivors: BTC failing Layer 1 must not
+            # switch this block off for every asset (D-059). A frame without the
+            # attribute falls back to the benchmark's own row.
+            benchmark = df.attrs.get(
+                f"benchmark_return_{window}",
+                returns.get(self.sectors.benchmark_asset, np.nan),
+            )
             if pd.isna(benchmark):
                 log.warning(
                     "sector_rs_no_benchmark",
@@ -250,28 +268,25 @@ class Layer2Scorer:
         days = days.where(~(days.isna() & known), 9999.0)
         days = days.where(known, np.nan)
         metrics["days_to_next_unlock"] = cross_sectional_percentile(days)
-        metrics["overhang_cleared"] = (
-            df["unlock_overhang_cleared"].astype("boolean").fillna(False).astype(float) * 100.0
-        )
-        metrics["positive_catalyst"] = (
-            df["positive_catalyst_30d"].astype("boolean").fillna(False).astype(float) * 100.0
-        )
-        # A monitoring tag is a soft exchange warning for elevated-volatility
-        # assets and often precedes delisting. Strong negative.
-        metrics["monitoring_tag"] = (
-            1.0 - df["monitoring_tag_active"].astype("boolean").fillna(False).astype(float)
-        ) * 100.0
+        # A KNOWN catalyst is evidence; the absence of a known one is not
+        # evidence of none. Filled with False, every asset we knew nothing about
+        # counted as measured and the block could never be None (D-059).
+        catalyst = df["positive_catalyst_30d"].astype("boolean").fillna(False).astype(bool)
+        metrics["positive_catalyst"] = pd.Series(np.nan, index=df.index).mask(catalyst, 100.0)
 
+        # The overhang is counted once, in the supply block. It was also a
+        # weight-2 metric here and the drawdown interaction: three counts of one
+        # flag (D-059).
         scores = self._combine(
-            df.index,
-            metrics,
-            {
-                "days_to_next_unlock": 2.0,
-                "overhang_cleared": 2.0,
-                "positive_catalyst": 1.0,
-                "monitoring_tag": 3.0,
-            },
+            df.index, metrics, {"days_to_next_unlock": 2.0, "positive_catalyst": 1.0}
         )
+
+        # A monitoring tag is a soft exchange warning for elevated-volatility
+        # assets and often precedes delisting. It is a measured negative, so it
+        # sets the block to zero whatever else is or is not known.
+        tagged = df["monitoring_tag_active"].astype("boolean").fillna(False).astype(bool)
+        metrics["monitoring_tag"] = pd.Series(np.nan, index=df.index).mask(tagged, 0.0)
+        scores = scores.mask(tagged, 0.0)
         return scores, metrics
 
     def score_attention(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
@@ -284,7 +299,9 @@ class Layer2Scorer:
         metrics: dict[str, pd.Series] = {}
         z = pd.to_numeric(df["social_volume_z"], errors="coerce")
         gated = z.where(z.abs() > self.t.attention_zscore_gate)
-        metrics["social_volume_z"] = cross_sectional_percentile(gated)
+        metrics["social_volume_z"] = cross_sectional_percentile(
+            gated, min_count=MIN_GATED_EXTREMES
+        )
         metrics["social_dominance"] = cross_sectional_percentile(df["social_dominance"])
         scores = self._combine(
             df.index, metrics, {"social_volume_z": 2.0, "social_dominance": 1.0}
@@ -308,12 +325,9 @@ class Layer2Scorer:
         metrics["pct_below_ath"] = cross_sectional_percentile(
             df["pct_below_ath"], higher_is_better=False
         )
-        metrics["overhang_interaction"] = (
-            df["unlock_overhang_cleared"].astype("boolean").fillna(False).astype(float) * 100.0
-        )
-        scores = self._combine(
-            df.index, metrics, {"pct_below_ath": 2.0, "overhang_interaction": 1.0}
-        )
+        # Drawdown only. The overhang interaction always counted as measured, so
+        # an asset with no ATH on file scored 0 here instead of None (D-059).
+        scores = self._combine(df.index, metrics, {"pct_below_ath": 1.0})
         return scores, metrics
 
     @staticmethod
@@ -449,12 +463,21 @@ def load_scoring_frame(db: Database, run_date: str, survivors: list[str]) -> pd.
 def _attach_returns(db: Database, df: pd.DataFrame, run_date: str) -> pd.DataFrame:
     """7d and 30d returns, for the sector relative-strength block."""
     now = df["price_usd"] if "price_usd" in df.columns else pd.Series(dtype=float)
+    benchmark = get_config().sectors.benchmark_asset
+    benchmark_now = db.scalar(
+        "SELECT price_usd FROM market_snapshot WHERE base_asset = ? AND snapshot_date = "
+        "(SELECT MAX(snapshot_date) FROM market_snapshot WHERE snapshot_date <= ?)",
+        (benchmark, run_date),
+    )
     for window, days in (("7d", 7), ("30d", 30)):
         then = add_days(run_date, -days)
+        # At most three days older than the window start: a price from weeks
+        # before is not "the price 7 days ago" (D-059).
         rows = db.query(
             "SELECT base_asset, close_usd FROM price_daily WHERE snapshot_date = "
-            "(SELECT MAX(snapshot_date) FROM price_daily WHERE snapshot_date <= ?)",
-            (then,),
+            "(SELECT MAX(snapshot_date) FROM price_daily "
+            " WHERE snapshot_date <= ? AND snapshot_date >= ?)",
+            (then, add_days(then, -3)),
         )
         past = {r["base_asset"]: r["close_usd"] for r in rows}
         df[f"return_{window}"] = [
@@ -463,6 +486,12 @@ def _attach_returns(db: Database, df: pd.DataFrame, run_date: str) -> pd.DataFra
             else np.nan
             for a in df.index
         ]
+        then_price = past.get(benchmark)
+        df.attrs[f"benchmark_return_{window}"] = (
+            (benchmark_now - then_price) / then_price
+            if benchmark_now and then_price
+            else np.nan
+        )
     return df
 
 
@@ -578,6 +607,7 @@ def block_correlation_report(db: Database, min_days: int | None = None) -> dict[
 
 __all__ = [
     "BLOCKS",
+    "MIN_GATED_EXTREMES",
     "Layer2Scorer",
     "block_correlation_report",
     "cross_sectional_percentile",

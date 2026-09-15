@@ -85,6 +85,33 @@ class TestUnlockFeatures:
         events = [_event(event_type="mainnet", event_date_utc="2026-09-20")]
         assert compute_features("X", events, RUN_DATE).positive_catalyst_30d is True
 
+    def test_an_ecosystem_unlock_does_not_hide_a_later_team_cliff(self):
+        """D-057. The nearest major unlock was an 8% ecosystem one; Layer 1 saw
+        'ecosystem' and passed, and the 20% team cliff behind it went unseen."""
+        events = [
+            _event(event_date_utc="2026-09-14", recipient_type="ecosystem", pct_of_circulating=0.08),
+            _event(event_date_utc="2026-09-29", recipient_type="team", pct_of_circulating=0.20),
+        ]
+        f = compute_features("X", events, RUN_DATE)
+        assert f.next_unlock_recipient_type == "team"
+        assert f.next_unlock_pct_circulating == pytest.approx(0.20)
+        assert f.days_to_next_major_unlock == 20
+
+    def test_small_unlocks_to_one_recipient_add_up(self):
+        """D-057. Two 3% team unlocks inside the window are one 6% event to the market."""
+        events = [
+            _event(event_date_utc="2026-09-19", pct_of_circulating=0.03),
+            _event(event_date_utc="2026-09-29", pct_of_circulating=0.03),
+        ]
+        f = compute_features("X", events, RUN_DATE)
+        assert f.next_unlock_pct_circulating == pytest.approx(0.06)
+        assert f.days_to_next_major_unlock == 10
+
+    def test_a_past_linear_stream_is_not_a_cleared_overhang(self):
+        """D-057. A stream's end is not recorded, so it may still be vesting."""
+        events = [_event(event_type="unlock_linear", event_date_utc="2026-06-01")]
+        assert compute_features("X", events, RUN_DATE).unlock_overhang_cleared is False
+
 
 class TestPointInTimeHonesty:
     def test_events_first_seen_after_as_of_are_invisible(self, db):

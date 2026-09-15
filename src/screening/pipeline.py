@@ -43,9 +43,23 @@ COVERAGE_INPUTS: dict[str, str] = {
     # A listing on file is not an unlock schedule (D-038).
     "L1_UNLOCK": "has_unlock_record",
     "L1_MCAP_LIQ": "liquidations_24h_usd",
-    "L1_PERP_SPOT": "has_spot_pair",
+    # Both inputs (D-058): a spot outage (no pairs) or a derivatives outage (no
+    # perp volume) would otherwise fail every asset instead of darkening the check.
+    "L1_PERP_SPOT": "perp_spot_resolvable",
     "L1_OI_MCAP": "open_interest_usd",
 }
+
+
+def implied_mcap_change(market_cap: float | None, change_pct: float | None) -> float | None:
+    """Market-cap change implied by the 24h price move, for the liquidation ratio.
+
+    Undefined at -100% or below, where the previous cap would be infinite. The
+    old code returned +market_cap there: a total collapse recorded as a gain of
+    the whole cap (D-058). None fails L1_MCAP_LIQ as data unavailable instead.
+    """
+    if market_cap is None or change_pct is None or change_pct <= -100:
+        return None
+    return market_cap - market_cap / (1.0 + change_pct / 100.0)
 
 
 class StaleDataError(RuntimeError):
@@ -112,11 +126,7 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
 
         market_cap = m.get("market_cap_usd")
         change_pct = m.get("price_change_24h_pct")
-        # Market-cap change implied by the 24h move, for the liquidation ratio.
-        mcap_change = None
-        if market_cap is not None and change_pct is not None:
-            previous = market_cap / (1.0 + change_pct / 100.0) if change_pct != -100 else 0.0
-            mcap_change = market_cap - previous
+        mcap_change = implied_mcap_change(market_cap, change_pct)
 
         snapshots.append(
             AssetSnapshot(
@@ -381,6 +391,7 @@ __all__ = [
     "StaleDataError",
     "assert_fresh",
     "compute_dark_checks",
+    "implied_mcap_change",
     "load_snapshots",
     "run_layer1",
     "run_screen",

@@ -43,6 +43,9 @@ class TestUnscorableAssetIsNotPersistedAsZero:
             "return_7d", "return_30d",
         ):
             df[column] = np.nan
+        # One measured input, so an asset is genuinely scorable. The fixture used
+        # to score only because unmeasured event flags counted as measured (D-059).
+        df["pct_below_ath"] = -0.5
         return df
 
     def test_a_nan_total_is_omitted_rather_than_written_as_zero(self, db, monkeypatch):

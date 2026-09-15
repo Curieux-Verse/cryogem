@@ -188,6 +188,13 @@ class AssetSnapshot:
         # coverage under the floor that switches the whole check off.
         return self.top10_holder_share is not None or self.holder_applicability == "native_coin"
 
+    @property
+    def perp_spot_resolvable(self) -> bool:
+        # The coverage input for L1_PERP_SPOT (D-058). Keyed on the spot pair
+        # alone, a derivatives outage left coverage untouched while every asset
+        # with a spot pair failed "perp volume unavailable".
+        return self.has_spot_pair and self.perp_volume_24h_usd is not None
+
 
 class Layer1Screener:
     """Runs the nine binary checks.
@@ -479,6 +486,12 @@ class Layer1Screener:
         for check_id in self.dark:
             if check_id in checks:
                 original = checks[check_id]
+                if not original.passed and not original.reason.startswith("data_unavailable"):
+                    # The source is dark for the run, but THIS asset was measured
+                    # and the measurement failed. Pardoning it would pass a 95%
+                    # holder share on any day coverage dipped under the floor.
+                    # D-007 excuses missing data, never a real reading (D-058).
+                    continue
                 checks[check_id] = CheckResult(
                     check_id,
                     passed=True,

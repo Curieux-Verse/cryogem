@@ -36,6 +36,7 @@ from src.screening.pipeline import (
     _one_contract_per_asset,
     assert_fresh,
     compute_dark_checks,
+    implied_mcap_change,
 )
 from src.timeutil import format_instant, today_utc, utc_now
 from tests.conftest import load_fixture
@@ -148,6 +149,25 @@ class TestBinanceFreshness:
     def test_latest_derivatives_are_binance_even_when_hyperliquid_is_newer(self, db):
         self._seed(db, "2026-09-14T03:00:00Z", "2026-09-14T04:00:00Z")
         assert set(_latest_derivatives(db, "2026-09-14")) == {"BTCUSDT"}
+
+
+class TestPipelineInputs:
+    """D-058."""
+
+    def test_a_total_collapse_has_no_implied_change_rather_than_a_gain(self):
+        assert implied_mcap_change(1_000.0, -100.0) is None
+        assert implied_mcap_change(500.0, -50.0) == pytest.approx(-500.0)
+        assert implied_mcap_change(None, 10.0) is None
+
+    def test_perp_spot_coverage_needs_perp_volume_as_well_as_a_spot_pair(self):
+        """A derivatives outage must darken the check, not fail every asset."""
+        snapshots = [
+            AssetSnapshot(base_asset=f"A{i}", has_spot_pair=True, perp_volume_24h_usd=None)
+            for i in range(5)
+        ]
+        dark, coverage = compute_dark_checks(snapshots)
+        assert "L1_PERP_SPOT" in dark
+        assert coverage["L1_PERP_SPOT"] == 0.0
 
 
 def goplus_entry(name: str) -> dict:

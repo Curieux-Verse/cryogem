@@ -6,6 +6,7 @@ import math
 
 import pytest
 
+from src.events.features import compute_features
 from src.screening.layer1_kill import CHECK_IDS, AssetSnapshot, Layer1Screener
 
 
@@ -137,6 +138,41 @@ class TestSourceOutageIsDifferentFromAssetGap:
         )
         assert not result.passed
         assert result.failed_checks == ["L1_HOLDER_CONC"]
+
+    def test_a_measured_failure_is_not_pardoned_by_a_dark_source(self):
+        """D-058. Holder coverage fell under the floor, but THIS asset was measured at 99%."""
+        screener = Layer1Screener(dark_checks=frozenset({"L1_HOLDER_CONC"}))
+        result = screener.run(clean(top10_holder_share=0.99), "2026-09-09")
+        assert not result.passed
+        assert result.failed_checks == ["L1_HOLDER_CONC"]
+
+    def test_an_unmeasured_asset_still_passes_a_dark_check(self):
+        screener = Layer1Screener(dark_checks=frozenset({"L1_HOLDER_CONC"}))
+        result = screener.run(clean(top10_holder_share=None), "2026-09-09")
+        assert result.passed
+        assert result.dark_checks == ["L1_HOLDER_CONC"]
+
+
+class TestUnlockMaskingEndToEnd:
+    """D-057, through the real feature code rather than hand-set snapshot fields."""
+
+    def test_a_team_cliff_behind_an_ecosystem_unlock_fails_layer1(self, screener):
+        events = [
+            {"event_type": "unlock_cliff", "event_date_utc": "2026-09-14",
+             "recipient_type": "ecosystem", "pct_of_circulating": 0.08},
+            {"event_type": "unlock_cliff", "event_date_utc": "2026-09-29",
+             "recipient_type": "team", "pct_of_circulating": 0.20},
+        ]
+        f = compute_features("X", events, "2026-09-09")
+        result = screener.run(
+            clean(
+                days_to_next_major_unlock=f.days_to_next_major_unlock,
+                next_unlock_pct_circulating=f.next_unlock_pct_circulating,
+                next_unlock_recipient_type=f.next_unlock_recipient_type,
+            ),
+            "2026-09-09",
+        )
+        assert "L1_UNLOCK" in result.failed_checks
 
 
 class TestLiquidationTriggerSymmetry:

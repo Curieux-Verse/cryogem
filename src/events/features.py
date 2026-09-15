@@ -145,6 +145,51 @@ def _is_major_unlock(event: dict[str, Any], min_pct: float) -> bool:
     return True if pct is None else float(pct) >= min_pct
 
 
+def _worst_unlock_in_window(
+    future: list[tuple[int, dict[str, Any]]],
+    lookahead: int,
+    min_pct: float,
+    fail_types: list[str],
+) -> tuple[int, dict[str, Any]] | None:
+    """The largest team/investor/unknown unlock inside the kill-check window (D-057).
+
+    Taking simply the nearest major unlock let an 8% ecosystem unlock in five
+    days hide a 20% team cliff in twenty: Layer 1 saw 'ecosystem' and passed.
+    And several unlocks to one recipient, each under the threshold, were never
+    added up. Here every supply event inside the window whose recipient could
+    fail the check is summed per recipient, and the worst total is returned. An
+    unsized event makes its recipient's total unknown, which Layer 1 fails.
+    """
+    totals: dict[str | None, dict[str, Any]] = {}
+    for delta, event in future:
+        if delta > lookahead or event["event_type"] not in SUPPLY_EVENTS:
+            continue
+        recipient = event.get("recipient_type")
+        if recipient is not None and recipient not in fail_types:
+            continue
+        slot = totals.setdefault(recipient, {"days": delta, "pct": 0.0, "unsized": False})
+        slot["days"] = min(slot["days"], delta)
+        pct = event.get("pct_of_circulating")
+        if pct is None:
+            slot["unsized"] = True
+        else:
+            slot["pct"] += float(pct)
+
+    candidates = [
+        (recipient, slot)
+        for recipient, slot in totals.items()
+        if slot["unsized"] or slot["pct"] >= min_pct
+    ]
+    if not candidates:
+        return None
+    recipient, slot = max(candidates, key=lambda c: (c[1]["unsized"], c[1]["pct"]))
+    return slot["days"], {
+        "event_type": "unlock_window_total",
+        "recipient_type": recipient,
+        "pct_of_circulating": None if slot["unsized"] else slot["pct"],
+    }
+
+
 def compute_features(
     base_asset: str,
     events: list[dict[str, Any]],
@@ -171,14 +216,22 @@ def compute_features(
     future.sort(key=lambda pair: pair[0])
     past.sort(key=lambda pair: pair[0], reverse=True)
 
-    next_major = next(((d, e) for d, e in future if _is_major_unlock(e, min_pct)), None)
+    # The worst unlock the kill check can fail on comes first; only when there is
+    # none inside the window is the nearest major unlock of any recipient shown.
+    next_major = _worst_unlock_in_window(
+        future, lookahead, min_pct, cfg.thresholds.layer1.unlock_fail_recipient_types
+    ) or next(((d, e) for d, e in future if _is_major_unlock(e, min_pct)), None)
     last_major = next(((d, e) for d, e in past if _is_major_unlock(e, min_pct)), None)
 
     # The inverse signal: every known major cliff is behind us. Requires that
     # we actually HAVE unlock history -- an asset we know nothing about is not
     # an asset whose overhang has cleared.
     has_any_unlock_record = any(e["event_type"] in SUPPLY_EVENTS for e in events)
-    overhang_cleared = has_any_unlock_record and next_major is None
+    # A linear stream's END is not recorded: unlock rows mark rate changes, and a
+    # stream ending adds no row. So a stream that started in the past may still
+    # be vesting today, and its overhang cannot be shown to have cleared (D-057).
+    vesting_may_continue = any(e["event_type"] == "unlock_linear" for e in events)
+    overhang_cleared = has_any_unlock_record and next_major is None and not vesting_may_continue
 
     density = sum(1 for delta, _ in future if 0 <= delta <= 30)
     positive_catalyst = any(

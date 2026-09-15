@@ -1528,3 +1528,74 @@ unresolved for that reason alone. `DEFILLAMA_CHAIN_ALIASES` maps them.
 - A delisted asset stays in `meta` with `isDelisted: true`. It was written to
   `universe_snapshot` as `TRADING`, putting it in the point-in-time universe. It
   is now `DELISTED`.
+
+---
+
+## D-057 — The unlock kill check sees the worst unlock in its window
+
+**Date:** 2026-09-15 · **Status:** accepted · **Tightens L1_UNLOCK**
+
+`next_major` was simply the nearest major unlock, whoever received it. An 8%
+ecosystem unlock in five days therefore hid a 20% team cliff in twenty: Layer 1
+read "ecosystem" and passed. Unlocks to one recipient that were each under 5%
+were never added together, however many landed inside the window.
+
+**Rule.** Inside the 30-day window, every supply event whose recipient could fail
+the check (team, investor, or unknown) is summed per recipient; the largest total
+-- an unsized one first -- is what Layer 1 sees. Only when nothing qualifies is
+the nearest major unlock of any recipient shown, for Layer 2's distance metric.
+
+**Also.** `unlock_overhang_cleared` is false for any asset with a linear vesting
+stream on file. Unlock rows mark rate changes and a stream ending adds no row, so
+a stream that began in the past may still be vesting and its overhang cannot be
+shown to have cleared. Recording the stream's end date would lift this.
+
+---
+
+## D-058 — A dark source never pardons a measured failure
+
+**Date:** 2026-09-15 · **Status:** accepted · **Tightens D-007**
+
+D-007 turned a check off for the run when its source coverage fell under the
+floor, which is right for the assets that could not be measured. It also passed
+the assets that WERE measured and failed: a 95% holder share on a day holder
+coverage dipped to 19%. A check now stays failed for an asset whose failure is a
+real reading; only a `data_unavailable` failure is pardoned by a dark source.
+
+Two pipeline inputs in the same family:
+
+- `L1_PERP_SPOT` coverage keyed on the spot pair alone. A derivatives outage left
+  coverage intact while every asset with a spot pair failed "perp volume
+  unavailable". Coverage now needs a spot pair and a perp volume.
+- The market-cap change implied by a -100% move came out as +market cap: a total
+  collapse recorded as a gain. It is now undefined (None).
+
+---
+
+## D-059 — A Layer 2 block with nothing measured is None
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+The renormalisation rule -- an unmeasured block is None and its weight moves to
+the others -- was defeated inside two blocks:
+
+- **events**: the catalyst and monitoring flags were filled with False and counted
+  as measured, so an asset we knew nothing about scored about 50. A known catalyst
+  still scores 100; no known catalyst is now no reading. A monitoring tag sets the
+  block to 0 whatever else is known.
+- **drawdown**: the overhang interaction was always measured, so an asset with no
+  ATH scored 0 instead of None.
+
+`unlock_overhang_cleared` had been counted three times (supply bonus, events,
+drawdown). It now counts once, in supply.
+
+Smaller defects in the same module:
+
+- A negative revenue gave a negative price-to-sales, which ranked as the cheapest
+  asset. P/S is measured for positive revenue only.
+- One asset past the attention gate ranked first of one and scored 100. The gated
+  metric needs at least three assets past the gate.
+- The sector block read BTC's return from the survivors, so BTC failing Layer 1
+  switched the block off for every asset. The benchmark return now comes from
+  price history, and a "7 days ago" price may be at most three days older than
+  that.
