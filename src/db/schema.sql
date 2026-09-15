@@ -411,6 +411,7 @@ CREATE TABLE IF NOT EXISTS forward_return (
     horizon         TEXT NOT NULL,
     entry_price     REAL,
     price_source    TEXT,
+    exit_reason     TEXT,
     price_at_horizon REAL,
     return_raw      REAL,
     return_vs_btc   REAL,

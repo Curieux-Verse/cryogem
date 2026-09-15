@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import math
 import statistics
 import uuid
 from dataclasses import dataclass, field
@@ -89,6 +90,8 @@ class Trade:
     max_favourable: float | None = None
     regime: str | None = None
     blocks: dict[str, float | None] = field(default_factory=dict)
+    #: 'horizon', or 'delisted' when the asset stopped trading first (D-061).
+    exit_reason: str = "horizon"
 
     @property
     def total_cost(self) -> float:
@@ -104,7 +107,15 @@ def history(db: Database) -> dict[str, Any]:
         r["run_date"]
         for r in db.query("SELECT DISTINCT run_date FROM layer2_result ORDER BY run_date")
     ]
-    signals = db.scalar("SELECT COUNT(*) FROM layer2_result") or 0
+    # Rankings that would have been reported, not every scored row: one day of
+    # ~200 survivors met a 200-signal threshold on its own (D-063).
+    signals = (
+        db.scalar(
+            "SELECT COUNT(*) FROM layer2_result WHERE rank <= ?",
+            (get_config().thresholds.journal.report_top_n,),
+        )
+        or 0
+    )
     return {
         "screening_days": len(dates),
         "first_date": dates[0] if dates else None,
@@ -275,12 +286,10 @@ def replay(
     skipped_no_price = 0
 
     for run_date in dates:
-        exit_date = add_days(run_date, days)
         # The journal's own price functions, so both sides read the same bars
         # and a disagreement means a real defect, not two conventions (D-047).
         btc_entry = journal_prices.entry_close(db, BTC, run_date)
-        btc_exit = journal_prices.horizon_close(db, BTC, run_date, days)
-        if not btc_entry or not btc_exit:
+        if not btc_entry or journal_prices.horizon_close(db, BTC, run_date, days) is None:
             # Every return is measured against BTC. Without the benchmark the
             # day contributes nothing measurable, and substituting zero would
             # quietly convert a missing benchmark into an outperforming one.
@@ -305,19 +314,28 @@ def replay(
         for row, is_control in candidates:
             asset = row["base_asset"]
             entry = journal_prices.entry_close(db, asset, run_date)
-            exit_price = journal_prices.horizon_close(db, asset, run_date, days)
-            if not entry or not exit_price:
+            closing = journal_prices.exit_bar(db, asset, run_date, days)
+            if not entry or closing is None:
+                skipped_no_price += 1
+                continue
+            exit_on, exit_price, reason = closing
+            # BTC over the holding period the position actually had (D-061).
+            btc_exit = journal_prices.close_on(db, BTC, exit_on, run_date)
+            if not btc_exit:
                 skipped_no_price += 1
                 continue
 
             gross = (exit_price - entry) / entry
-            funding = funding_cost(db, asset, run_date, exit_date)
-            slippage = slippage_cost(db, asset, run_date, position_usd)
+            funding = funding_cost(db, asset, run_date, exit_on)
+            # Both fills cross the book, each at the depth on file then (D-063).
+            slippage = slippage_cost(db, asset, run_date, position_usd) + slippage_cost(
+                db, asset, exit_on, position_usd
+            )
             net = gross - fees - funding - slippage
             btc_return = (btc_exit - btc_entry) / btc_entry
             # From the day after the signal: the entry is that day's close.
             favourable, adverse = _excursions(
-                db, asset, add_days(run_date, 1), exit_date, entry
+                db, asset, add_days(run_date, 1), exit_on, entry
             )
 
             trades.append(
@@ -339,6 +357,7 @@ def replay(
                     max_favourable=favourable,
                     max_adverse=adverse,
                     regime=regime,
+                    exit_reason=reason,
                     blocks={
                         key.replace("score_", ""): row.get(key)
                         for key in (
@@ -366,25 +385,15 @@ def replay(
 def _controls(db: Database, run_date: str, chosen: set[str]) -> list[str]:
     """Random L1 survivors outside the ranking, drawn the SAME way the journal
     draws them -- seeded on run_date -- so the two agree by construction."""
-    import random
-
-    survivors = [
-        r["base_asset"]
-        for r in db.query(
-            "SELECT base_asset FROM layer1_result WHERE run_date = ? AND passed = 1",
-            (run_date,),
-        )
-    ]
-    pool = [a for a in survivors if a not in chosen]
-    if not pool:
-        return []
-    return random.Random(run_date).sample(pool, k=min(len(chosen), len(pool)))
+    # The journal's own control group -- the journalled one when it exists --
+    # so the harness and the journal compare against the same assets (D-062).
+    return [a for a in journal_prices.draw_controls(db, run_date) if a not in chosen]
 
 
 # ==============================================================================
 # Metrics
 # ==============================================================================
-def equity_curve(trades: list[Trade]) -> list[dict[str, Any]]:
+def equity_curve(trades: list[Trade], horizon_days: int = 30) -> list[dict[str, Any]]:
     """Equal-weight net returns per run date, compounded, beside BTC hold.
 
     Equal weight and not score weight: score-weighting is a second strategy
@@ -399,7 +408,14 @@ def equity_curve(trades: list[Trade]) -> list[dict[str, Any]]:
 
     equity, btc_equity = 1.0, 1.0
     out: list[dict[str, Any]] = []
+    next_entry: str | None = None
     for date in sorted(by_date):
+        # Non-overlapping (D-063). Compounding a 30-day return on every run date
+        # counted each month about thirty times over. Enter, hold one horizon,
+        # enter again: a sequence one account could actually have run.
+        if next_entry is not None and date < next_entry:
+            continue
+        next_entry = add_days(date, horizon_days)
         batch = by_date[date]
         strategy = statistics.fmean(t.net_return for t in batch)
         btc = statistics.fmean((t.btc_exit - t.btc_entry) / t.btc_entry for t in batch)
@@ -440,10 +456,12 @@ def _ratio(returns: list[float], downside_only: bool = False) -> float | None:
         return None
     mean = statistics.fmean(returns)
     if downside_only:
-        losses = [r for r in returns if r < 0]
-        if len(losses) < 2:
+        # Downside deviation: the root mean square of shortfalls below zero,
+        # over EVERY return. The standard deviation of the losses alone measured
+        # how much the losses differed from each other (D-063).
+        if sum(1 for r in returns if r < 0) < 2:
             return None
-        deviation = statistics.pstdev(losses)
+        deviation = math.sqrt(statistics.fmean(min(r, 0.0) ** 2 for r in returns))
     else:
         deviation = statistics.pstdev(returns)
     if not deviation:
@@ -525,7 +543,7 @@ def block_attribution(trades: list[Trade]) -> dict[str, Any]:
 # Holdout -- one shot, and enforced rather than promised
 # ==============================================================================
 def split_dates(
-    dates: list[str], holdout_fraction: float | None = None
+    dates: list[str], holdout_fraction: float | None = None, embargo_days: int = 0
 ) -> tuple[list[str], list[str]]:
     """Chronological split. Development first, holdout last, never shuffled.
 
@@ -540,7 +558,12 @@ def split_dates(
     if not dates:
         return [], []
     cut = int(len(dates) * (1.0 - fraction))
-    return dates[:cut], dates[cut:]
+    development, holdout = dates[:cut], dates[cut:]
+    if embargo_days and holdout:
+        # A development trade entered within one horizon of the holdout exits
+        # inside it, so its outcome is holdout data (D-063).
+        development = [d for d in development if add_days(d, embargo_days) < holdout[0]]
+    return development, holdout
 
 
 def record_holdout_run(
@@ -605,7 +628,7 @@ def run_backtest(
                 (start, end),
             )
         ]
-        development, holdout_dates = split_dates(dates)
+        development, holdout_dates = split_dates(dates, embargo_days=horizon_to_days(horizon))
         window = holdout_dates if holdout else development
         if not window:
             raise InsufficientHistory(
@@ -618,7 +641,7 @@ def run_backtest(
         )
         signals = [t for t in trades if not t.is_control]
         controls = [t for t in trades if t.is_control]
-        curve = equity_curve(trades)
+        curve = equity_curve(trades, horizon_to_days(horizon))
 
         by_regime = {}
         for regime in ("btc_up", "btc_flat", "btc_down", "unknown"):

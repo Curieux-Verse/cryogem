@@ -61,6 +61,8 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "forward_return": (
         ("entry_price", "REAL"),
         ("price_source", "TEXT"),
+        # D-061: 'horizon', or 'delisted' when the asset stopped trading first.
+        ("exit_reason", "TEXT"),
     ),
 }
 

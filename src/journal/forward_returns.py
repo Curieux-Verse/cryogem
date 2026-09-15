@@ -109,7 +109,12 @@ def _draw_controls(
     survivors = [
         r["base_asset"]
         for r in db.query(
-            "SELECT base_asset FROM layer1_result WHERE run_date = ? AND passed = 1", (run_date,)
+            # Sorted: a seeded sample of an unordered result depends on the
+            # order the backend returns rows in, which differs between sqlite
+            # and Turso and changes with an index (D-062).
+            "SELECT base_asset FROM layer1_result WHERE run_date = ? AND passed = 1 "
+            "ORDER BY base_asset",
+            (run_date,),
         )
     ]
     pool = [a for a in survivors if a not in set(chosen)]
@@ -117,6 +122,42 @@ def _draw_controls(
         return []
     rng = random.Random(seed if seed is not None else run_date)
     return rng.sample(pool, k=min(len(chosen), len(pool)))
+
+
+def draw_controls(db: Database, run_date: str, seed: int | None = None) -> list[str]:
+    """The control group for a run date: the journalled one if it exists (D-062).
+
+    Control ids are per asset, so re-running a day whose survivor pool had
+    changed inserted a second, different control group beside the first. And
+    the harness drew its own controls from a different pool (excluding its top
+    15, not the journal's top 25), so "agree by construction" was not true.
+    Both now come through here.
+    """
+    recorded = [
+        r["base_asset"]
+        for r in db.query(
+            "SELECT base_asset FROM journal_entry WHERE run_date = ? AND is_control = 1 "
+            "ORDER BY base_asset",
+            (run_date,),
+        )
+    ]
+    if recorded:
+        return recorded
+    top_n = get_config().thresholds.journal.top_n_to_journal
+    chosen = [
+        r["base_asset"]
+        for r in db.query(
+            "SELECT base_asset FROM layer2_result WHERE run_date = ? ORDER BY rank LIMIT ?",
+            (run_date, top_n),
+        )
+    ]
+    return _draw_controls(db, run_date, chosen, seed)
+
+
+def entries_on(run_date: str) -> int:
+    """Journal entries on file for a run date, signals and controls alike."""
+    with get_db() as db:
+        return db.scalar("SELECT COUNT(*) FROM journal_entry WHERE run_date = ?", (run_date,)) or 0
 
 
 def _build_entry(
@@ -217,7 +258,7 @@ def write_entries(run_date: str | None = None, seed: int | None = None) -> int:
             return 0
 
         chosen = [r["base_asset"] for r in ranked]
-        controls = _draw_controls(db, date, chosen, seed)
+        controls = draw_controls(db, date, seed)
 
         rows: list[dict[str, Any]] = []
         for entry in ranked:
@@ -276,18 +317,20 @@ def backfill_returns(as_of: str | None = None) -> int:
                 asset, run_date = entry["base_asset"], entry["run_date"]
                 asset_then = entry_close(db, asset, run_date)
                 btc_then = entry_close(db, BTC, run_date)
-                asset_now = horizon_close(db, asset, run_date, days)
-                btc_now = horizon_close(db, BTC, run_date, days)
-                if not asset_then or not btc_then or asset_now is None or btc_now is None:
+                closing = exit_bar(db, asset, run_date, days)
+                # BTC over the holding period the position actually had: a
+                # delisted asset exits early, and BTC exits with it (D-061).
+                btc_now = close_on(db, BTC, closing[0], run_date) if closing else None
+                if not asset_then or not btc_then or closing is None or btc_now is None:
                     # A bar is missing. Leave it pending rather than writing a
                     # fabricated number -- the row is append-only and a wrong
                     # value could never be corrected.
                     continue
 
+                exit_date, asset_now, exit_reason = closing
                 raw = (asset_now - asset_then) / asset_then
                 btc_return = (btc_now - btc_then) / btc_then
-                target_date = add_days(run_date, days)
-                excursion = _excursion(db, asset, add_days(run_date, 1), target_date, asset_then)
+                excursion = _excursion(db, asset, add_days(run_date, 1), exit_date, asset_then)
 
                 rows.append(
                     {
@@ -295,6 +338,7 @@ def backfill_returns(as_of: str | None = None) -> int:
                         "horizon": horizon,
                         "entry_price": asset_then,
                         "price_source": PRICE_SOURCE,
+                        "exit_reason": exit_reason,
                         "price_at_horizon": asset_now,
                         "return_raw": round(raw, 6),
                         # Relative to BTC: the only number that distinguishes
@@ -350,14 +394,68 @@ def _price_at(db: Database, asset: str, date: str, earliest: str) -> float | Non
         would be obvious -- it is a plausible-looking one, which is worse. The
         caller therefore passes earliest = run_date + 1 day at minimum.
     """
+    bar = _bar_at(db, asset, date, earliest)
+    return bar[1] if bar else None
+
+
+def _bar_at(db: Database, asset: str, date: str, earliest: str) -> tuple[str, float] | None:
+    """(date, close) of the newest kline bar in [earliest, date]."""
     if earliest > date:
         return None
-    return db.scalar(
-        "SELECT close_usd FROM price_daily WHERE base_asset = ? "
+    row = db.query_one(
+        "SELECT snapshot_date, close_usd FROM price_daily WHERE base_asset = ? "
         "AND snapshot_date <= ? AND snapshot_date >= ? AND source = ? "
         "ORDER BY snapshot_date DESC LIMIT 1",
         (asset, date, earliest, PRICE_SOURCE),
     )
+    return (row["snapshot_date"], row["close_usd"]) if row else None
+
+
+def close_on(db: Database, asset: str, date: str, run_date: str) -> float | None:
+    """The close on `date`, or up to a week before it, never back to the signal day."""
+    return _price_at(db, asset, date, max(add_days(date, -7), add_days(run_date, 1)))
+
+
+def exit_bar(
+    db: Database, asset: str, run_date: str, days: int
+) -> tuple[str, float, str] | None:
+    """(date, close, reason) for a position opened on `run_date`; None while pending.
+
+    At the horizon when a bar exists there ('horizon'). When the asset has
+    stopped trading -- a recent Binance universe snapshot no longer lists it --
+    at its last close after the signal ('delisted', D-061). Before, a delisted
+    asset had no horizon price and stayed pending forever, so the worst outcomes
+    in the system never reached its statistics.
+    """
+    target = add_days(run_date, days)
+    bar = _bar_at(db, asset, target, max(add_days(target, -7), add_days(run_date, 1)))
+    if bar is not None:
+        return bar[0], bar[1], "horizon"
+    if not _stopped_trading(db, asset, target):
+        return None
+    last = _bar_at(db, asset, target, add_days(run_date, 1))
+    return (last[0], last[1], "delisted") if last else None
+
+
+def _stopped_trading(db: Database, asset: str, target: str) -> bool:
+    """True when a Binance universe snapshot from the week before `target` omits the asset.
+
+    A missing or stale snapshot is an outage of ours, not a delisting, and
+    answers False: the row stays pending rather than closing on a guess.
+    """
+    latest = db.scalar(
+        "SELECT MAX(snapshot_date) FROM universe_snapshot "
+        "WHERE exchange = 'binance' AND snapshot_date <= ?",
+        (target,),
+    )
+    if not latest or latest < add_days(target, -7):
+        return False
+    listed = db.scalar(
+        "SELECT COUNT(*) FROM universe_snapshot WHERE exchange = 'binance' "
+        "AND snapshot_date = ? AND base_asset = ? AND status = 'TRADING'",
+        (latest, asset),
+    )
+    return not listed
 
 
 def _excursion(
@@ -549,8 +647,12 @@ def _pct(value: float | None, of_one: bool = False) -> str:
 __all__ = [
     "PRICE_SOURCE",
     "backfill_returns",
+    "close_on",
     "compute_statistics",
+    "draw_controls",
+    "entries_on",
     "entry_close",
+    "exit_bar",
     "horizon_close",
     "render_report",
     "write_entries",

@@ -157,6 +157,14 @@ def journal_command(
     written = forward_returns.write_entries(run_date)
     filled = forward_returns.backfill_returns()
     typer.echo(f"{run_date}: {written} journal entries written, {filled} forward returns filled")
+    if not forward_returns.entries_on(run_date):
+        # Nothing on file for the day: no ranking yet, or no BTC price. A day
+        # the journal skips can never be written later, so this fails the job
+        # and withholds the healthcheck ping rather than exiting clean (D-062).
+        typer.secho(
+            f"{run_date}: the journal holds no entries for this day", fg=typer.colors.RED
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command("report")

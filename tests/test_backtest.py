@@ -10,6 +10,9 @@ because one of the two can see forward.
 
 from __future__ import annotations
 
+import math
+import statistics
+
 import pytest
 
 from src.backtest import harness as bt
@@ -240,6 +243,13 @@ class TestSplit:
         assert len(holdout) == 30
         assert development + holdout == dates
 
+    def test_the_development_split_ends_one_horizon_before_the_holdout(self):
+        """D-063. A development trade exiting inside the holdout is holdout data."""
+        dates = [add_days(START, i) for i in range(90)]
+        development, holdout = bt.split_dates(dates, holdout_fraction=1 / 3, embargo_days=30)
+        assert add_days(development[-1], 30) < holdout[0]
+        assert len(holdout) == 30
+
     def test_an_empty_date_list_splits_to_nothing(self):
         assert bt.split_dates([]) == ([], [])
 
@@ -315,6 +325,41 @@ class TestMetrics:
         assert curve
         assert bt.max_drawdown(curve) <= 0
 
+    def test_max_drawdown_measures_peak_to_trough(self):
+        """The assertion above cannot fail: `worst` starts at zero."""
+        curve = [{"equity": value} for value in (1.0, 1.2, 0.9, 1.1)]
+        assert bt.max_drawdown(curve) == pytest.approx(-0.25)
+
+    def test_the_equity_curve_does_not_compound_overlapping_trades(self, db):
+        """D-063. 120 daily entries of a 30-day trade compounded as 120 periods."""
+        dates = seed_history(db, days=130)
+        curve = bt.equity_curve(bt.replay(db, dates[0], dates[-1], horizon="30d"), 30)
+        entered = [point["run_date"] for point in curve]
+        assert len(entered) >= 2
+        assert all(add_days(a, 30) <= b for a, b in zip(entered, entered[1:]))
+
+    def test_sortino_uses_downside_deviation_over_every_return(self):
+        """D-063. Two identical losses have zero spread between them, which the
+        old version divided by; the downside deviation is not zero."""
+        returns = [0.10, -0.05, -0.05, 0.20]
+        downside = math.sqrt((0.0025 + 0.0025) / 4)
+        expected = round(statistics.fmean(returns) / downside, 4)
+        assert bt._ratio(returns, downside_only=True) == pytest.approx(expected)
+
+    def test_a_delisted_signal_is_a_trade_not_a_silent_skip(self, db):
+        """D-061."""
+        dates = seed_history(db, days=130)
+        gone = add_days(START, 10)
+        db.execute("DELETE FROM price_daily WHERE base_asset = 'AAA' AND snapshot_date > ?", (gone,))
+        db.execute(
+            "DELETE FROM universe_snapshot WHERE base_asset = 'AAA' AND snapshot_date > ?", (gone,)
+        )
+        db.commit()
+        trades = bt.replay(db, dates[0], dates[5], horizon="30d")
+        delisted = [t for t in trades if t.base_asset == "AAA" and not t.is_control]
+        assert delisted
+        assert all(t.exit_reason == "delisted" for t in delisted)
+
     def test_ratios_return_none_rather_than_a_number_from_one_point(self):
         assert bt._ratio([0.05]) is None
         assert bt._ratio([0.05, 0.05]) is None  # zero deviation
@@ -366,6 +411,25 @@ class TestJournalReconciliation:
 
         out = bt.reconcile_with_journal("30d")
         assert out["comparable"] is True
+        assert out["compared"] > 0
+        assert out["verdict"] == "agree", out["disagreements"]
+
+    def test_harness_and_journal_agree_across_a_missing_price_day(self, db):
+        """The first reconciliation test had no gaps, so it could not catch two
+        different lookback rules."""
+        from src.journal import forward_returns as fr
+
+        seed_history(db, days=130)
+        db.execute(
+            "DELETE FROM price_daily WHERE base_asset = 'AAA' AND snapshot_date = ?",
+            (add_days(START, 40),),
+        )
+        db.commit()
+        for day in [add_days(START, i) for i in range(0, 60, 10)]:
+            fr.write_entries(day)
+        fr.backfill_returns(add_days(START, 129))
+
+        out = bt.reconcile_with_journal("30d")
         assert out["compared"] > 0
         assert out["verdict"] == "agree", out["disagreements"]
 

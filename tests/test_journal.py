@@ -162,6 +162,41 @@ class TestEntryWriting:
     def test_no_ranking_writes_nothing(self, db):
         assert fr.write_entries("2026-01-01") == 0
 
+    def test_a_rerun_with_more_survivors_draws_no_new_controls(self, db):
+        """D-062. Control ids are per asset, so a re-run whose survivor pool had
+        changed inserted a second, different control group beside the first."""
+        _seed_day(db)
+        fr.write_entries(RUN_DATE)
+        query = "SELECT base_asset FROM journal_entry WHERE is_control = 1"
+        before = {r["base_asset"] for r in db.query(query)}
+        for asset in ("FFF", "GGG", "HHH"):
+            _price(db, RUN_DATE, asset, 100.0)
+            upsert(
+                db,
+                "layer1_result",
+                [
+                    {
+                        "run_date": RUN_DATE,
+                        "base_asset": asset,
+                        "passed": 1,
+                        "failed_checks": None,
+                        "check_values": "{}",
+                        "fetched_at_utc": f"{RUN_DATE}T00:00:00Z",
+                    }
+                ],
+            )
+        db.commit()
+        fr.write_entries(RUN_DATE)
+        assert {r["base_asset"] for r in db.query(query)} == before
+
+    def test_the_control_draw_does_not_depend_on_row_order(self, db):
+        """D-062. The pool is sorted before the seeded sample."""
+        import random
+
+        _seed_day(db)
+        expected = random.Random(RUN_DATE).sample(["CCC", "DDD", "EEE"], k=2)
+        assert fr.draw_controls(db, RUN_DATE) == expected
+
     def test_layer_values_are_captured_at_signal_time(self, db):
         """The journal records what the system BELIEVED on the day. Re-deriving
         it later would use today's data and quietly rewrite the past."""
@@ -303,6 +338,53 @@ class TestForwardReturns:
             db.scalar("SELECT COUNT(*) FROM forward_return WHERE horizon = '30d'") == 0
         )
 
+    def test_a_delisted_asset_exits_at_its_last_close_not_pending_forever(self, db):
+        """D-061. With no horizon price the row stayed pending forever, so the
+        worst losers never reached the statistics."""
+        _seed_day(db)
+        fr.write_entries(RUN_DATE)
+        _price(db, "2026-06-03", "AAA", 40.0)  # its last trade
+        for day in ("2026-06-03", "2026-06-10", "2026-07-01"):
+            _price(db, day, "BTC", 60_000.0)
+        # On the horizon, Binance lists BTC and no longer lists AAA.
+        upsert(
+            db,
+            "universe_snapshot",
+            [
+                {
+                    "snapshot_date": "2026-07-01",
+                    "exchange": "binance",
+                    "symbol": "BTCUSDT",
+                    "base_asset": "BTC",
+                    "quote_asset": "USDT",
+                    "status": "TRADING",
+                    "fetched_at_utc": "2026-07-01T03:10:00Z",
+                }
+            ],
+        )
+        db.commit()
+
+        fr.backfill_returns("2026-07-02")
+        row = db.query_one(
+            "SELECT f.return_raw, f.exit_reason FROM forward_return f "
+            "JOIN journal_entry e ON e.entry_id = f.entry_id "
+            "WHERE e.base_asset = 'AAA' AND f.horizon = '30d'"
+        )
+        assert row["exit_reason"] == "delisted"
+        assert row["return_raw"] == pytest.approx(-0.60)
+
+    def test_without_a_recent_universe_a_missing_price_stays_pending(self, db):
+        """An outage of ours is not a delisting."""
+        _seed_day(db)
+        fr.write_entries(RUN_DATE)
+        _price(db, "2026-06-03", "AAA", 40.0)
+        _price(db, "2026-07-01", "BTC", 60_000.0)
+        db.commit()
+        fr.backfill_returns("2026-07-02")
+        assert (
+            db.scalar("SELECT COUNT(*) FROM forward_return WHERE horizon = '30d'") == 0
+        )
+
     def test_backfill_is_idempotent(self, db):
         _seed_day(db)
         fr.write_entries(RUN_DATE)
@@ -440,6 +522,27 @@ class TestStatistics:
         assert edge["median_difference"] == pytest.approx(0.10, abs=1e-4)
         assert edge["signal_n"] == 2
         assert edge["control_n"] == 2
+
+
+class TestJournalCommand:
+    """D-062. A day the journal skips can never be written later."""
+
+    def test_a_day_with_nothing_journalled_fails_the_command(self, db):
+        from typer.testing import CliRunner
+
+        from src.cli import app
+
+        result = CliRunner().invoke(app, ["journal", "--date", "2026-01-01"])
+        assert result.exit_code == 1
+
+    def test_a_journalled_day_exits_clean(self, db):
+        from typer.testing import CliRunner
+
+        from src.cli import app
+
+        _seed_day(db)
+        result = CliRunner().invoke(app, ["journal", "--date", RUN_DATE])
+        assert result.exit_code == 0, result.output
 
 
 class TestReport:

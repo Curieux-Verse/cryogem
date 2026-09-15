@@ -1625,3 +1625,59 @@ Two Layer 3 tests could not fail and now assert what they are named for: the
 invalidation test's break was always stale, so its assertions sat inside an `if`
 that never ran; and the funding test's timestamps never put the extreme reading
 last, and it then grepped the module's own source instead of calling it.
+
+---
+
+## D-061 — A delisted asset exits at its last close
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+The journal looked for a horizon price at most a week before the horizon date,
+and the harness three days. An asset delisted inside the horizon had neither, so
+its journal row stayed pending forever and the harness skipped the trade. The
+assets that stop trading are the worst outcomes this system can record, and they
+were the ones that never reached the statistics.
+
+**Rule.** `forward_returns.exit_bar`, shared by both: the horizon close when one
+exists; otherwise, if a Binance universe snapshot from the week before the horizon
+no longer lists the asset as trading, its last close after the signal, with
+`exit_reason = 'delisted'`. With no recent snapshot on file the row stays pending
+-- an outage of ours is not a delisting. BTC's return is measured over the same
+holding period, ending on the day the position actually exited; before, the asset
+and BTC each fell back independently, up to a week apart.
+
+---
+
+## D-062 — One control group per day, and a skipped journal day fails
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+- The survivor pool was sampled with no `ORDER BY`, so the seeded draw depended
+  on the order the backend returned rows in. It is sorted first.
+- Control ids are per asset. Re-running a day whose survivor pool had changed
+  drew a different sample and inserted it beside the first group.
+  `draw_controls` returns the journalled controls when a day has any.
+- The harness drew its own controls, excluding its top 15 where the journal
+  excludes its top 25. It now uses `draw_controls` too.
+- A journal run that found no ranking or no BTC price returned 0 and exited
+  clean, so healthchecks.io was pinged for a day that can never be written later.
+  `journal` now exits 1 when the day holds no entries.
+
+---
+
+## D-063 — Backtest metrics that mean what they say
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+- **Equity curve.** Each run date's 30-day return was compounded as if the
+  periods ran one after another, counting each month about thirty times. Entries
+  are now at least one horizon apart.
+- **Split.** No gap between development and holdout, so development trades
+  exited inside the holdout. Development dates within one horizon of the holdout
+  are dropped.
+- **Sortino.** It divided by the standard deviation of the losses among
+  themselves. It now uses downside deviation over every return.
+- **Signal gate.** `MIN_SIGNALS` counted every Layer 2 row, which one day of ~200
+  survivors met. It counts rows inside the reported top 15.
+- **Slippage.** Charged on entry only. Exits cross the book too, at the depth on
+  file on the exit date.
