@@ -95,6 +95,8 @@ class BinanceKlinesCollector(BaseCollector):
     name = "binance_klines"
     rate_limit_key = "binance_futures"
     tier = "C"
+    #: Klines serve history, and transform() drops every bar from as_of onward.
+    accepts_past_as_of = True
 
     def __init__(self, *args: Any, backfill: bool = False, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

@@ -18,7 +18,9 @@ from src.collectors.binance import (
     derive_funding_interval_hours,
     is_screenable_perp,
 )
+from src.collectors.coinalyze import CoinalyzeLiquidationCollector, previous_day_window
 from src.collectors.coingecko import CoinGeckoCollector
+from src.collectors.registry import refuse_as_of, resolve
 from src.collectors.defillama import DefiLlamaCollector
 from src.collectors.hyperliquid import HyperliquidCollector
 from src.symbols import funding_apr, parse_symbol, parse_universe
@@ -82,6 +84,54 @@ class TestBaseAssetCollisions:
         coin = {"contractType": "PERPETUAL", "quoteAsset": "USDT", "underlyingType": "COIN"}
         assert not is_screenable_perp(dom, "USDT")
         assert is_screenable_perp(coin, "USDT")
+
+
+class TestPastAsOf:
+    """D-048. Every collector but klines fetches live data, so a past --as-of
+    stamped today's values onto that day and overwrote what was recorded."""
+
+    def test_a_live_only_collector_refuses_a_past_date(self):
+        refused = refuse_as_of(resolve("daily"), "2026-09-01", "2026-09-15")
+        assert any(r.startswith("binance_universe:") for r in refused)
+        assert not any(r.startswith("binance_klines:") for r in refused)
+
+    def test_klines_accepts_a_past_date(self):
+        assert refuse_as_of(resolve("binance_klines"), "2026-09-01", "2026-09-15") == []
+
+    def test_today_is_always_accepted(self):
+        assert refuse_as_of(resolve("daily"), "2026-09-15", "2026-09-15") == []
+
+    def test_a_future_date_is_refused_for_everything(self):
+        assert refuse_as_of(resolve("binance_klines"), "2026-09-16", "2026-09-15")
+
+
+class TestCoinalyzeWindow:
+    """D-049. The window was sent in milliseconds and ended at run time, so it
+    asked for today's partial bar; an empty history then summed to 0.0."""
+
+    def test_window_is_the_previous_complete_utc_day_in_seconds(self):
+        start, end = previous_day_window(AS_OF)  # 2026-09-09 03:12 UTC
+        assert start == int(datetime(2026, 9, 8, tzinfo=timezone.utc).timestamp())
+        assert end == int(datetime(2026, 9, 9, tzinfo=timezone.utc).timestamp()) - 1
+
+    def test_only_the_window_bar_is_counted(self):
+        start, _ = previous_day_window(AS_OF)
+        raw = {
+            "BTCUSDT_PERP.A": {
+                "symbol": "BTCUSDT_PERP.A",
+                "history": [
+                    {"t": start, "l": 1_000.0, "s": 500.0},
+                    {"t": start + 86_400, "l": 9_999.0, "s": 9_999.0},  # today, partial
+                ],
+            }
+        }
+        rows = CoinalyzeLiquidationCollector().transform(raw, AS_OF)
+        assert len(rows) == 1
+        assert rows[0]["liq_total_usd_24h"] == pytest.approx(1_500.0)
+
+    def test_an_empty_history_writes_no_reading_not_a_zero(self):
+        raw = {"BTCUSDT_PERP.A": {"symbol": "BTCUSDT_PERP.A", "history": []}}
+        assert CoinalyzeLiquidationCollector().transform(raw, AS_OF) == []
 
 
 class TestFundingNormalisation:

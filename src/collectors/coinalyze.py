@@ -33,14 +33,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from src.collectors.base import BaseCollector
 from src.db.connection import get_db
 from src.db.writes import upsert
 from src.symbols import parse_universe
-from src.timeutil import format_day, millis_from, utc_now_iso
+from src.timeutil import format_day, utc_now_iso
 
 
 def _f(value: Any) -> float | None:
@@ -51,6 +51,27 @@ def _f(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed == parsed else None
+
+
+def previous_day_window(as_of: datetime) -> tuple[int, int]:
+    """[start, end] of the last complete UTC day before `as_of`, in Unix SECONDS.
+
+    A window ending at `as_of` catches mainly today's partial daily bar, which
+    at a 03:10 run is three hours of liquidations reported as a day's. The
+    previous full day is the newest bar that is final (D-049).
+    """
+    day = (as_of.astimezone(timezone.utc) if as_of.tzinfo else as_of).date()
+    midnight = datetime.combine(day, time(0, 0), tzinfo=timezone.utc)
+    start = midnight - timedelta(days=1)
+    return int(start.timestamp()), int(midnight.timestamp()) - 1
+
+
+def _bar_in_window(bar: dict[str, Any], start: int, end: int) -> bool:
+    try:
+        stamp = int(bar.get("t"))
+    except (TypeError, ValueError):
+        return False
+    return start <= stamp <= end
 
 
 class CoinalyzeLiquidationCollector(BaseCollector):
@@ -75,8 +96,9 @@ class CoinalyzeLiquidationCollector(BaseCollector):
         if not symbols:
             return {}
 
-        start = millis_from(as_of - timedelta(days=1))
-        end = millis_from(as_of)
+        # Unix seconds, the unit Coinalyze's from/to take. Milliseconds were sent
+        # before; confirm against a live response when the key lands (D-049).
+        start, end = previous_day_window(as_of)
         out: dict[str, Any] = {}
 
         async with self.client(base, headers={"api_key": key}) as client:
@@ -120,6 +142,7 @@ class CoinalyzeLiquidationCollector(BaseCollector):
     def transform(self, raw: dict[str, Any], as_of: datetime) -> list[dict[str, Any]]:
         fetched_at = utc_now_iso()
         snapshot_date = format_day(as_of)
+        start, end = previous_day_window(as_of)
         rows: list[dict[str, Any]] = []
 
         exchange_symbols = {key: str(key).split("_PERP")[0] for key in raw if key}
@@ -135,9 +158,14 @@ class CoinalyzeLiquidationCollector(BaseCollector):
             if parsed is None:
                 continue
 
-            history = entry.get("history") or []
-            longs = sum(_f(h.get("l")) or 0.0 for h in history)
-            shorts = sum(_f(h.get("s")) or 0.0 for h in history)
+            # Only the bar for the window's day. An empty history is not a day
+            # with zero liquidations; it is a day with no reading, and a 0.0
+            # here would be a measured value check 9 then trusts (D-049).
+            bars = [h for h in entry.get("history") or [] if _bar_in_window(h, start, end)]
+            if not bars:
+                continue
+            longs = sum(_f(h.get("l")) or 0.0 for h in bars)
+            shorts = sum(_f(h.get("s")) or 0.0 for h in bars)
             rows.append(
                 {
                     "snapshot_date": snapshot_date,

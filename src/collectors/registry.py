@@ -126,6 +126,24 @@ def resolve(selector: str) -> list[BaseCollector]:
     return []
 
 
+def refuse_as_of(collectors: list[BaseCollector], as_of_day: str, today: str) -> list[str]:
+    """Why each collector cannot run for `as_of_day`; empty when all can (D-048).
+
+    Every API here but Binance klines serves only the present. Run for a past
+    date, a collector stamps today's values onto that day, and its upsert
+    overwrites what was recorded then -- point-in-time data corrupted for good.
+    """
+    if as_of_day > today:
+        return [f"{c.name}: {as_of_day} is in the future" for c in collectors]
+    if as_of_day == today:
+        return []
+    return [
+        f"{c.name}: serves only live data, so it cannot record {as_of_day}"
+        for c in collectors
+        if not c.accepts_past_as_of
+    ]
+
+
 async def run_many(
     collectors: list[BaseCollector], as_of: datetime
 ) -> list[CollectorRunResult]:
@@ -150,4 +168,4 @@ async def run_many(
     return results
 
 
-__all__ = ["COLLECTORS", "TIERS", "names", "resolve", "run_many"]
+__all__ = ["COLLECTORS", "TIERS", "names", "refuse_as_of", "resolve", "run_many"]

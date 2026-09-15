@@ -1354,3 +1354,42 @@ and is context only. Each `forward_return` row now records the `entry_price` it
 was measured from and its `price_source`. Rows written before this change have
 neither set and were measured from `price_at_signal`; they stay as written,
 because the table is append-only.
+
+---
+
+## D-048 — A past `--as-of` is refused unless the source serves history
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+`collect --as-of` only changed the date on the timestamp. Every collector but
+klines reads an API that serves the present, so `collect daily --as-of
+2026-09-01` stamped that morning's universe, market caps and derivatives onto
+2026-09-01, and the upsert overwrote what had been recorded that day. Nothing
+downstream could tell: the rows carried a real `fetched_at_utc` and a plausible
+date. For a backtest that depends on point-in-time snapshots, that is permanent
+corruption from one command.
+
+**Rule.** A collector declares `accepts_past_as_of`. Only klines does: it serves
+history and drops every bar from `as_of` onward. A past date on anything else,
+or a future date on anything, refuses the whole command with exit 2 -- all or
+nothing, because half a tier recorded for a past day looks like a complete one.
+
+---
+
+## D-049 — Coinalyze: the previous full day, in seconds, never a fabricated zero
+
+**Date:** 2026-09-15 · **Status:** accepted · **Confirm against a live response once COINALYZE_API_KEY is set**
+
+Three defects in one call, none visible so far because the collector has only
+ever run without a key:
+
+- `from`/`to` were sent in milliseconds; Coinalyze takes Unix seconds.
+- The window ended at run time, so a 03:10 run asked mainly for today's partial
+  daily bar -- three hours of liquidations presented as a day's.
+- An empty `history` summed to `0.0`, which check 9 would read as a measured day
+  with no liquidations rather than a missing reading.
+
+**Rule.** Request the previous complete UTC day in seconds, count only the bar
+inside that window, and write no row when there is none, so coverage and check 9
+see a missing value. When the key is added, check the units and the bar
+timestamp against a real response and save it as a fixture.

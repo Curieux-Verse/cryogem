@@ -80,6 +80,17 @@ def collect_command(
         )
         raise typer.Exit(code=2)
 
+    if as_of:
+        from src.timeutil import format_day, today_utc
+
+        refused = registry.refuse_as_of(collectors, format_day(stamp), today_utc())
+        if refused:
+            # All or nothing: half a tier recorded for a past day is a snapshot
+            # no later reader can tell apart from a complete one (D-048).
+            for reason in refused:
+                typer.secho(f"refused  {reason}", fg=typer.colors.RED)
+            raise typer.Exit(code=2)
+
     results = asyncio.run(registry.run_many(collectors, stamp))
     failed = [r for r in results if not r.ok]
     for r in results:

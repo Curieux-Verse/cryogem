@@ -143,6 +143,9 @@ class BaseCollector(ABC):
     rate_limit_key: str = ""
     #: Tier C (daily), B (hourly) or A (5-minute host-only). Drives the CLI.
     tier: str = "C"
+    #: True only for a source that serves history, so a run for a past date
+    #: records that date's data rather than today's under the wrong day (D-048).
+    accepts_past_as_of: bool = False
 
     def __init__(self) -> None:
         self.config = get_config()
