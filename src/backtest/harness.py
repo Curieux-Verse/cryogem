@@ -45,6 +45,7 @@ from src.backtest import universe as bt_universe
 from src.config import get_config
 from src.db.connection import Database, get_db
 from src.db.writes import upsert
+from src.journal import forward_returns as journal_prices
 from src.logging_setup import get_logger
 from src.timeutil import add_days, days_between, horizon_to_days, utc_now_iso
 
@@ -212,8 +213,8 @@ def _price_on(db: Database, base_asset: str, day: str, lookback: int = 3) -> flo
 def _excursions(db: Database, base_asset: str, start: str, end: str, entry: float) -> tuple:
     rows = db.query(
         "SELECT high_usd, low_usd, close_usd FROM price_daily "
-        "WHERE base_asset = ? AND snapshot_date BETWEEN ? AND ?",
-        (base_asset, start, end),
+        "WHERE base_asset = ? AND snapshot_date BETWEEN ? AND ? AND source = ?",
+        (base_asset, start, end, journal_prices.PRICE_SOURCE),
     )
     highs = [r["high_usd"] or r["close_usd"] for r in rows if (r["high_usd"] or r["close_usd"])]
     lows = [r["low_usd"] or r["close_usd"] for r in rows if (r["low_usd"] or r["close_usd"])]
@@ -275,8 +276,10 @@ def replay(
 
     for run_date in dates:
         exit_date = add_days(run_date, days)
-        btc_entry = _price_on(db, BTC, run_date)
-        btc_exit = _price_on(db, BTC, exit_date)
+        # The journal's own price functions, so both sides read the same bars
+        # and a disagreement means a real defect, not two conventions (D-047).
+        btc_entry = journal_prices.entry_close(db, BTC, run_date)
+        btc_exit = journal_prices.horizon_close(db, BTC, run_date, days)
         if not btc_entry or not btc_exit:
             # Every return is measured against BTC. Without the benchmark the
             # day contributes nothing measurable, and substituting zero would
@@ -301,8 +304,8 @@ def replay(
         regime = regime_on(db, run_date)
         for row, is_control in candidates:
             asset = row["base_asset"]
-            entry = _price_on(db, asset, run_date)
-            exit_price = _price_on(db, asset, exit_date)
+            entry = journal_prices.entry_close(db, asset, run_date)
+            exit_price = journal_prices.horizon_close(db, asset, run_date, days)
             if not entry or not exit_price:
                 skipped_no_price += 1
                 continue
@@ -312,7 +315,10 @@ def replay(
             slippage = slippage_cost(db, asset, run_date, position_usd)
             net = gross - fees - funding - slippage
             btc_return = (btc_exit - btc_entry) / btc_entry
-            favourable, adverse = _excursions(db, asset, run_date, exit_date, entry)
+            # From the day after the signal: the entry is that day's close.
+            favourable, adverse = _excursions(
+                db, asset, add_days(run_date, 1), exit_date, entry
+            )
 
             trades.append(
                 Trade(

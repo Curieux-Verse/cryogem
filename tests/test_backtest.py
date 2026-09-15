@@ -102,7 +102,7 @@ def _price(day: str, asset: str, close: float) -> dict:
         "low_usd": close * 0.93,
         "close_usd": close,
         "volume_usd": 1e6,
-        "source": "test",
+        "source": "binance_klines",
         "fetched_at_utc": f"{day}T00:00:00Z",
     }
 

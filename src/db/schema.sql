@@ -406,6 +406,8 @@ CREATE INDEX IF NOT EXISTS idx_journal_control ON journal_entry(is_control, run_
 CREATE TABLE IF NOT EXISTS forward_return (
     entry_id        TEXT NOT NULL,
     horizon         TEXT NOT NULL,
+    entry_price     REAL,
+    price_source    TEXT,
     price_at_horizon REAL,
     return_raw      REAL,
     return_vs_btc   REAL,

@@ -51,6 +51,13 @@ log = get_logger("journal")
 
 BTC = "BTC"
 
+#: The one price series returns are measured on. CoinGecko also writes
+#: price_daily, but at collection time (~03:10) and keyed on its own ticker,
+#: which is not always the Binance token of that name. Klines are keyed by the
+#: Binance contract and are the only series the backtest can rebuild, so the
+#: journal and the harness read the same bars and agree by construction (D-047).
+PRICE_SOURCE = "binance_klines"
+
 
 def _prices_on(db: Database, run_date: str) -> dict[str, float]:
     """Closing prices on the most recent day at or before `run_date`."""
@@ -167,6 +174,8 @@ def _build_entry(
         "base_asset": asset,
         "rank": int(ranked.get("rank") or 0),
         "total_score": float(score if score is not None else 0.0),
+        # The price the screen saw at run time, kept as context. Returns are
+        # NOT measured from it: see entry_close and D-047.
         "price_at_signal": price,
         "btc_price_at_signal": btc_price,
         "is_control": 1 if is_control else 0,
@@ -264,29 +273,28 @@ def backfill_returns(as_of: str | None = None) -> int:
 
             rows: list[dict[str, Any]] = []
             for entry in pending:
-                target_date = add_days(entry["run_date"], days)
-                # The lookback may never reach back to (or before) the signal
-                # day. See _price_at: at a 1d horizon an unbounded week of
-                # lookback would find the ENTRY price and report a 0% return.
-                earliest = max(add_days(target_date, -7), add_days(entry["run_date"], 1))
-                asset_now = _price_at(db, entry["base_asset"], target_date, earliest)
-                btc_now = _price_at(db, BTC, target_date, earliest)
-                if asset_now is None or btc_now is None:
-                    # No price yet for that date. Leave it pending rather than
-                    # writing a fabricated zero -- the row is append-only and a
-                    # wrong value could never be corrected.
+                asset, run_date = entry["base_asset"], entry["run_date"]
+                asset_then = entry_close(db, asset, run_date)
+                btc_then = entry_close(db, BTC, run_date)
+                asset_now = horizon_close(db, asset, run_date, days)
+                btc_now = horizon_close(db, BTC, run_date, days)
+                if not asset_then or not btc_then or asset_now is None or btc_now is None:
+                    # A bar is missing. Leave it pending rather than writing a
+                    # fabricated number -- the row is append-only and a wrong
+                    # value could never be corrected.
                     continue
 
-                raw = (asset_now - entry["price_at_signal"]) / entry["price_at_signal"]
-                btc_return = (btc_now - entry["btc_price_at_signal"]) / entry["btc_price_at_signal"]
-                excursion = _excursion(
-                    db, entry["base_asset"], entry["run_date"], target_date, entry["price_at_signal"]
-                )
+                raw = (asset_now - asset_then) / asset_then
+                btc_return = (btc_now - btc_then) / btc_then
+                target_date = add_days(run_date, days)
+                excursion = _excursion(db, asset, add_days(run_date, 1), target_date, asset_then)
 
                 rows.append(
                     {
                         "entry_id": entry["entry_id"],
                         "horizon": horizon,
+                        "entry_price": asset_then,
+                        "price_source": PRICE_SOURCE,
                         "price_at_horizon": asset_now,
                         "return_raw": round(raw, 6),
                         # Relative to BTC: the only number that distinguishes
@@ -301,6 +309,29 @@ def backfill_returns(as_of: str | None = None) -> int:
 
     log.info("forward_returns_backfilled", filled=filled, as_of=date)
     return filled
+
+
+def entry_close(db: Database, asset: str, run_date: str) -> float | None:
+    """The kline close of the signal day itself.
+
+    The screen runs at ~03:10 on the signal day, on data collected minutes
+    earlier, so that day's close is the first price strictly after everything
+    the ranking knew. There is no fallback to an earlier day: an earlier close
+    precedes information the ranking used, which is look-ahead in the entry.
+    """
+    return db.scalar(
+        "SELECT close_usd FROM price_daily WHERE base_asset = ? AND snapshot_date = ? "
+        "AND source = ?",
+        (asset, run_date, PRICE_SOURCE),
+    )
+
+
+def horizon_close(db: Database, asset: str, run_date: str, days: int) -> float | None:
+    """The kline close `days` after the signal day, tolerating a missed week."""
+    target = add_days(run_date, days)
+    # Never back to (or before) the signal day -- see _price_at.
+    earliest = max(add_days(target, -7), add_days(run_date, 1))
+    return _price_at(db, asset, target, earliest)
 
 
 def _price_at(db: Database, asset: str, date: str, earliest: str) -> float | None:
@@ -323,9 +354,9 @@ def _price_at(db: Database, asset: str, date: str, earliest: str) -> float | Non
         return None
     return db.scalar(
         "SELECT close_usd FROM price_daily WHERE base_asset = ? "
-        "AND snapshot_date <= ? AND snapshot_date >= ? "
+        "AND snapshot_date <= ? AND snapshot_date >= ? AND source = ? "
         "ORDER BY snapshot_date DESC LIMIT 1",
-        (asset, date, earliest),
+        (asset, date, earliest, PRICE_SOURCE),
     )
 
 
@@ -337,11 +368,14 @@ def _excursion(
     This is what tells the user whether a stop would have been hit before the
     target. A +20% endpoint return that first drew down 40% is not a winning
     trade, and the endpoint alone cannot show that.
+
+    The caller starts the window the day AFTER the signal: the entry is that
+    day's close, so its intraday high and low happened before the position did.
     """
     rows = db.query(
         "SELECT close_usd, high_usd, low_usd FROM price_daily "
-        "WHERE base_asset = ? AND snapshot_date BETWEEN ? AND ?",
-        (asset, start, end),
+        "WHERE base_asset = ? AND snapshot_date BETWEEN ? AND ? AND source = ?",
+        (asset, start, end, PRICE_SOURCE),
     )
     if not rows:
         return {"max_favourable": None, "max_adverse": None}
@@ -513,8 +547,11 @@ def _pct(value: float | None, of_one: bool = False) -> str:
 
 
 __all__ = [
+    "PRICE_SOURCE",
     "backfill_returns",
     "compute_statistics",
+    "entry_close",
+    "horizon_close",
     "render_report",
     "write_entries",
 ]

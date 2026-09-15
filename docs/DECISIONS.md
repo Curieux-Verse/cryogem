@@ -1319,3 +1319,38 @@ basket, so market cap, supply and holders do not exist for them.
 
 **Existing data.** `price_daily` rows for `BOB` written before this change are
 the meme coin's. Re-backfill klines for BOB after the first run under this rule.
+
+---
+
+## D-047 — Returns are measured on Binance kline closes only
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+`price_daily` has two writers. CoinGecko writes the collection-time price
+(~03:10) under its own ticker; the next day's klines run replaces that row with
+the Binance contract's real close. The journal took its entry from whichever
+row existed at 06:10 on the signal day (CoinGecko's), and its exit from
+whichever existed when the horizon was filled -- CoinGecko's if on time, a kline
+close if filled late or if CoinGecko missed that day. Two sources, two times of
+day, and for a ticker CoinGecko resolves to a different token than Binance
+lists, two different coins. The harness can only rebuild kline closes, so it
+could not agree with the journal by construction.
+
+**Rule.** Every return, in the journal and the harness, reads
+`source = 'binance_klines'` through the same functions
+(`forward_returns.entry_close` and `horizon_close`):
+
+- entry: the close of the signal day. The screen ran at ~03:10 on data from
+  minutes earlier, so this is the first price strictly after everything the
+  ranking knew. No fallback to an earlier day: that would be look-ahead.
+- exit: the close `h` days later, back at most a week, never to the signal day.
+- excursions: the bars from the day after the signal through the exit.
+
+**Cost.** A horizon fills one day later than before: the exit bar only exists
+once the next day's klines run has written it.
+
+`journal_entry.price_at_signal` keeps its meaning -- the price the screen saw --
+and is context only. Each `forward_return` row now records the `entry_price` it
+was measured from and its `price_source`. Rows written before this change have
+neither set and were measured from `price_at_signal`; they stay as written,
+because the table is append-only.

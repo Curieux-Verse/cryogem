@@ -56,6 +56,11 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         ("source_ref", "TEXT"),
         ("retracted_utc", "TEXT"),
     ),
+    # D-047: the price a return was measured from, and which series it came from.
+    "forward_return": (
+        ("entry_price", "REAL"),
+        ("price_source", "TEXT"),
+    ),
 }
 
 #: Statements that depend on an ADDED column, so they must run after the

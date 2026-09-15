@@ -29,7 +29,7 @@ def _price(db, date: str, asset: str, close: float, high=None, low=None) -> None
                 "low_usd": low if low is not None else close,
                 "close_usd": close,
                 "volume_usd": 1e6,
-                "source": "test",
+                "source": "binance_klines",
                 "fetched_at_utc": f"{date}T00:00:00Z",
             }
         ],
@@ -218,6 +218,51 @@ class TestForwardReturns:
         )
         assert row["return_raw"] == pytest.approx(0.20, abs=1e-6)
         assert row["return_vs_btc"] == pytest.approx(0.10, abs=1e-6)
+
+    def test_entry_is_the_signal_day_kline_close_not_the_run_time_price(self, db):
+        """D-047. price_at_signal is the price at collection time; the next
+        day's klines run replaces that row with the day's real close. Returns
+        are measured from the close, which the backtest can also rebuild."""
+        _seed_day(db)
+        fr.write_entries(RUN_DATE)  # price_at_signal = 100
+        _price(db, RUN_DATE, "AAA", 110.0)  # the signal day's kline close
+        _price(db, "2026-06-02", "AAA", 121.0)
+        _price(db, "2026-06-02", "BTC", 60_000.0)
+        db.commit()
+
+        fr.backfill_returns("2026-06-03")
+        row = db.query_one(
+            "SELECT e.price_at_signal, f.entry_price, f.price_source, f.return_raw "
+            "FROM forward_return f JOIN journal_entry e ON e.entry_id = f.entry_id "
+            "WHERE e.base_asset = 'AAA' AND f.horizon = '1d'"
+        )
+        assert row["price_at_signal"] == pytest.approx(100.0)
+        assert row["entry_price"] == pytest.approx(110.0)
+        assert row["price_source"] == "binance_klines"
+        assert row["return_raw"] == pytest.approx(0.10, abs=1e-6)
+
+    def test_a_coingecko_row_is_never_a_horizon_price(self, db):
+        """CoinGecko keys price_daily on its own ticker, which is not always the
+        Binance token of that name. A horizon priced from it could compare two
+        different coins."""
+        _seed_day(db)
+        fr.write_entries(RUN_DATE)
+        upsert(
+            db,
+            "price_daily",
+            [
+                {
+                    "snapshot_date": "2026-06-02",
+                    "base_asset": asset,
+                    "close_usd": close,
+                    "source": "coingecko",
+                    "fetched_at_utc": "2026-06-02T03:10:00Z",
+                }
+                for asset, close in (("AAA", 120.0), ("BTC", 66_000.0))
+            ],
+        )
+        db.commit()
+        assert fr.backfill_returns("2026-06-03") == 0
 
     def test_excursions_record_the_path_not_just_the_endpoint(self, db):
         """A +20% return that first drew down 40% is not a winning trade."""
