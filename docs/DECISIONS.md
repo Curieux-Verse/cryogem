@@ -1393,3 +1393,40 @@ ever run without a key:
 inside that window, and write no row when there is none, so coverage and check 9
 see a missing value. When the key is added, check the units and the bar
 timestamp against a real response and save it as a fixture.
+
+---
+
+## D-050 — "Latest" and "fresh" mean Binance's latest
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+Hyperliquid writes `derivatives_snapshot` and `universe_snapshot` every hour,
+beside Binance. Several queries took `MAX(...)` over the whole table:
+
+- `doctor` and the screen's `assert_fresh`: a dead Binance feed read as fresh as
+  long as Hyperliquid was running, so the screen ran on days-old Binance data.
+- `_latest_derivatives`: the newest timestamp could be Hyperliquid's, which
+  matches no Binance row, so every OI and perp-volume input read as missing.
+- klines, DefiLlama and news: a Hyperliquid-only date matched no Binance row
+  (klines then fetched nothing and still reported success), or brought
+  Hyperliquid tickers into a Binance universe.
+
+**Rule.** Each of these filters `exchange = 'binance'`. `doctor.FRESHNESS_TARGETS`
+carries the filter, and `assert_fresh` reads the same tuple, so the dead-man
+check and the screen cannot disagree about what fresh means.
+
+---
+
+## D-051 — A klines run with failing symbols is partial, and past 20% it is failed
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+Per-symbol failures were logged with `self.log.warning`, not `self.warn`, so
+they never reached the run status: a 418 ban that failed every symbol recorded
+`success` with zero rows.
+
+**Rule.** A failed symbol is a `warn()`, which makes the run `partial`. Above
+20% of symbols the run raises and is `failed`, which fails `collect daily` and
+stops the screen for the day -- the journal and Layer 3 read these bars, so a
+screen on a mostly-missing price history is worse than none. Nothing is lost:
+bars are history, and the next run's seven-day overlap fetches them again.

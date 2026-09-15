@@ -68,6 +68,19 @@ INCREMENTAL_DAYS = 7
 OPEN_TIME, OPEN, HIGH, LOW, CLOSE, VOLUME = 0, 1, 2, 3, 4, 5
 QUOTE_VOLUME = 7
 
+#: Above this share of symbols failing, the run is a failure, not a partial. A
+#: 418 IP ban fails every symbol, and 'partial' would let it pass as a bad day.
+MAX_SYMBOL_FAILURE_SHARE = 0.2
+
+
+def check_failure_share(failed: int, total: int) -> None:
+    """Raise when too many symbols failed for the run to count as partial (D-051)."""
+    if total and failed / total > MAX_SYMBOL_FAILURE_SHARE:
+        raise RuntimeError(
+            f"{failed} of {total} symbols failed, over the "
+            f"{MAX_SYMBOL_FAILURE_SHARE:.0%} ceiling: the run is failed, not partial"
+        )
+
 
 def _scaled(value: float | None, scale: float) -> float | None:
     return None if value is None else value / scale
@@ -137,14 +150,20 @@ class BinanceKlinesCollector(BaseCollector):
                         out[symbol] = await self._fetch_symbol(client, symbol, start_day)
                     except Exception as exc:  # noqa: BLE001
                         # One symbol's history is not worth the whole run. A
-                        # delisted or newly-listed contract legitimately 400s.
-                        self.log.warning(
+                        # delisted or newly-listed contract legitimately 400s --
+                        # but through warn(), so the run reads 'partial' rather
+                        # than 'success' (D-051).
+                        self.warn(
                             "klines_symbol_failed",
                             symbol=symbol,
                             error_type=type(exc).__name__,
                         )
 
             await asyncio.gather(*(one(s) for s in symbols))
+
+        # Bars are history, so a failed run loses nothing the next run's
+        # overlapping window will not fetch again.
+        check_failure_share(len(symbols) - len(out), len(symbols))
         return out
 
     async def _fetch_symbol(self, client: Any, symbol: str, start_day: str) -> list[list]:
@@ -194,7 +213,11 @@ class BinanceKlinesCollector(BaseCollector):
         universe is exactly the record that prevents survivorship bias later.
         """
         with get_db() as db:
-            snapshot = db.scalar("SELECT MAX(snapshot_date) FROM universe_snapshot")
+            # Binance only (D-050). A Hyperliquid-only date would match no row
+            # below, and the run would fetch nothing while reporting success.
+            snapshot = db.scalar(
+                "SELECT MAX(snapshot_date) FROM universe_snapshot WHERE exchange = 'binance'"
+            )
             if not snapshot:
                 return []
             return [

@@ -145,11 +145,16 @@ class DefiLlamaCollector(BaseCollector):
 
     def _universe_assets(self) -> list[str]:
         with get_db() as db:
-            latest = db.scalar("SELECT MAX(snapshot_date) FROM universe_snapshot")
+            # Binance only (D-050): Hyperliquid's hourly rows would otherwise make
+            # the newest date theirs, and bring their tickers with it.
+            latest = db.scalar(
+                "SELECT MAX(snapshot_date) FROM universe_snapshot WHERE exchange = 'binance'"
+            )
             if not latest:
                 return []
             rows = db.query(
-                "SELECT DISTINCT base_asset FROM universe_snapshot WHERE snapshot_date=?",
+                "SELECT DISTINCT base_asset FROM universe_snapshot "
+                "WHERE snapshot_date = ? AND exchange = 'binance'",
                 (latest,),
             )
         return sorted(r["base_asset"] for r in rows)

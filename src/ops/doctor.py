@@ -26,11 +26,15 @@ from src.timeutil import age_hours, today_utc, utc_now_iso
 
 log = get_logger("ops.doctor")
 
-#: Tables whose staleness would corrupt a screen, and how they are timestamped.
-FRESHNESS_TARGETS: tuple[tuple[str, str], ...] = (
-    ("derivatives_snapshot", "fetched_at_utc"),
-    ("market_snapshot", "fetched_at_utc"),
-    ("universe_snapshot", "fetched_at_utc"),
+#: Tables whose staleness would corrupt a screen, how they are timestamped, and
+#: which rows count. Hyperliquid writes derivatives and universe rows every
+#: hour, so an unfiltered MAX() read as fresh while the Binance feed the screen
+#: actually uses had been dead for days (D-050). The screen's own freshness
+#: assertion reads this same tuple, so the two can never disagree.
+FRESHNESS_TARGETS: tuple[tuple[str, str, str], ...] = (
+    ("derivatives_snapshot", "fetched_at_utc", "exchange = 'binance'"),
+    ("market_snapshot", "fetched_at_utc", "1 = 1"),
+    ("universe_snapshot", "fetched_at_utc", "exchange = 'binance'"),
 )
 
 
@@ -64,8 +68,8 @@ def run_diagnostics(max_age_hours: float | None = None) -> dict[str, Any]:
             # -- freshness ---------------------------------------------------
             lines.append("")
             lines.append(f"freshness   : limit {limit:g}h")
-            for table, column in FRESHNESS_TARGETS:
-                newest = db.scalar(f"SELECT MAX({column}) FROM {table}")
+            for table, column, where in FRESHNESS_TARGETS:
+                newest = db.scalar(f"SELECT MAX({column}) FROM {table} WHERE {where}")
                 if not newest:
                     problems.append(f"{table} is empty")
                     lines.append(f"  {table:<22} EMPTY            <- no data collected yet")

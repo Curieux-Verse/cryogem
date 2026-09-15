@@ -9,11 +9,12 @@ array and a contract multiplier can quietly corrupt a price series.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
 
-from src.collectors.klines import BinanceKlinesCollector
+from src.collectors.klines import BinanceKlinesCollector, check_failure_share
 
 AS_OF = datetime(2026, 6, 10, 3, 10, tzinfo=timezone.utc)
 
@@ -70,6 +71,39 @@ class TestDeMultiplication:
         assert set(by_asset) == {"BOB", "1000000BOB"}
         assert by_asset["1000000BOB"]["close_usd"] == pytest.approx(0.018)
         assert by_asset["BOB"]["close_usd"] == pytest.approx(0.02)
+
+
+class TestSymbolFailures:
+    """D-051. Per-symbol failures were logged but never reached warn(), so a run
+    where every symbol failed still recorded 'success'."""
+
+    @staticmethod
+    def _fetch(collector, monkeypatch, symbols, bad):
+        async def fake_fetch_symbol(client, symbol, start_day):
+            if symbol in bad:
+                raise RuntimeError("HTTP 400")
+            return [bar("2026-06-01")]
+
+        monkeypatch.setattr(collector, "_symbols_to_fetch", lambda: symbols)
+        monkeypatch.setattr(collector, "_fetch_symbol", fake_fetch_symbol)
+        return asyncio.run(collector.fetch(AS_OF))
+
+    def test_a_symbol_failure_is_a_warning_that_downgrades_the_run(self, collector, monkeypatch):
+        symbols = ["AUSDT", "BUSDT", "CUSDT", "DUSDT", "EUSDT", "BADUSDT"]
+        out = self._fetch(collector, monkeypatch, symbols, bad={"BADUSDT"})
+        assert set(out) == set(symbols) - {"BADUSDT"}
+        assert "klines_symbol_failed" in collector._warnings
+
+    def test_a_mass_failure_fails_the_run(self, collector, monkeypatch):
+        symbols = ["AUSDT", "BUSDT", "CUSDT"]
+        with pytest.raises(RuntimeError, match="failed, over the"):
+            self._fetch(collector, monkeypatch, symbols, bad=set(symbols))
+
+    def test_the_ceiling(self):
+        check_failure_share(2, 10)
+        check_failure_share(0, 0)
+        with pytest.raises(RuntimeError):
+            check_failure_share(3, 10)
 
 
 class TestPartialBars:

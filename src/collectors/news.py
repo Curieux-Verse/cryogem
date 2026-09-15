@@ -254,8 +254,9 @@ class NewsCollector(BaseCollector):
         """Restrict ticker extraction to assets we actually track."""
         with get_db() as db:
             rows = db.query(
-                "SELECT DISTINCT base_asset FROM universe_snapshot "
-                "WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM universe_snapshot)"
+                "SELECT DISTINCT base_asset FROM universe_snapshot WHERE exchange = 'binance' "
+                "AND snapshot_date = (SELECT MAX(snapshot_date) FROM universe_snapshot "
+                "WHERE exchange = 'binance')"
             )
         return {r["base_asset"] for r in rows}
 

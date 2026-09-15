@@ -9,7 +9,7 @@ the live APIs on 2026-09-13, or a per-test sqlite file. NO NETWORK.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -30,10 +30,14 @@ from src.events.features import load_known_events
 from src.report import daily
 from src.screening.layer1_kill import AssetSnapshot, Layer1Screener
 from src.screening.pipeline import (
+    StaleDataError,
+    _latest_derivatives,
     _latest_holders,
     _one_contract_per_asset,
+    assert_fresh,
     compute_dark_checks,
 )
+from src.timeutil import format_instant, today_utc, utc_now
 from tests.conftest import load_fixture
 
 AS_OF = datetime(2026, 9, 13, 3, 0, 0, tzinfo=timezone.utc)
@@ -67,6 +71,83 @@ class TestOneContractPerAsset:
             {"symbol": "1000PEPEUSDT", "base_asset": "PEPE", "price_multiplier": 1000},
         ]
         assert _one_contract_per_asset(rows) == rows
+
+
+class TestBinanceFreshness:
+    """D-050. Hyperliquid writes derivatives and universe rows every hour. An
+    unfiltered MAX() read that as fresh while the Binance feed the screen uses
+    had been dead for days."""
+
+    @staticmethod
+    def _seed(db, binance_ts: str, hyperliquid_ts: str) -> None:
+        for exchange, ts, symbol in (
+            ("binance", binance_ts, "BTCUSDT"),
+            ("hyperliquid", hyperliquid_ts, "BTC"),
+        ):
+            upsert(
+                db,
+                "derivatives_snapshot",
+                [
+                    {
+                        "ts_utc": ts,
+                        "exchange": exchange,
+                        "symbol": symbol,
+                        "base_asset": "BTC",
+                        "open_interest_usd": 1.0,
+                        "fetched_at_utc": ts,
+                    }
+                ],
+            )
+            upsert(
+                db,
+                "universe_snapshot",
+                [
+                    {
+                        "snapshot_date": ts[:10],
+                        "exchange": exchange,
+                        "symbol": symbol,
+                        "base_asset": "BTC",
+                        "quote_asset": "USDT",
+                        "status": "TRADING",
+                        "fetched_at_utc": ts,
+                    }
+                ],
+            )
+        upsert(
+            db,
+            "market_snapshot",
+            [
+                {
+                    "snapshot_date": hyperliquid_ts[:10],
+                    "base_asset": "BTC",
+                    "fetched_at_utc": hyperliquid_ts,
+                }
+            ],
+        )
+        db.commit()
+
+    def test_a_dead_binance_feed_is_stale_even_when_hyperliquid_is_live(self, db):
+        now = utc_now()
+        self._seed(db, format_instant(now - timedelta(days=5)), format_instant(now))
+        with pytest.raises(StaleDataError, match="derivatives_snapshot"):
+            assert_fresh(db, today_utc())
+
+    def test_a_live_binance_feed_passes(self, db):
+        now = format_instant(utc_now())
+        self._seed(db, now, now)
+        assert_fresh(db, today_utc())
+
+    def test_doctor_reports_the_dead_binance_feed(self, db):
+        from src.ops.doctor import run_diagnostics
+
+        now = utc_now()
+        self._seed(db, format_instant(now - timedelta(days=5)), format_instant(now))
+        problems = run_diagnostics()["problems"]
+        assert any(p.startswith("derivatives_snapshot") for p in problems)
+
+    def test_latest_derivatives_are_binance_even_when_hyperliquid_is_newer(self, db):
+        self._seed(db, "2026-09-14T03:00:00Z", "2026-09-14T04:00:00Z")
+        assert set(_latest_derivatives(db, "2026-09-14")) == {"BTCUSDT"}
 
 
 def goplus_entry(name: str) -> dict:

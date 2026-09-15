@@ -28,6 +28,7 @@ from src.db.connection import Database, get_db
 from src.db.writes import json_dump, upsert
 from src.events.features import compute_all
 from src.logging_setup import get_logger
+from src.ops.doctor import FRESHNESS_TARGETS
 from src.screening.layer1_kill import AssetSnapshot, Layer1Result, Layer1Screener
 from src.timeutil import add_days, age_hours, today_utc, utc_now_iso
 
@@ -55,8 +56,8 @@ def assert_fresh(db: Database, run_date: str) -> None:
     """Refuse to screen on stale data. Fails the CI job loudly."""
     cfg = get_config()
     limit = cfg.thresholds.collectors.max_data_age_hours
-    for table in ("derivatives_snapshot", "market_snapshot", "universe_snapshot"):
-        newest = db.scalar(f"SELECT MAX(fetched_at_utc) FROM {table}")
+    for table, column, where in FRESHNESS_TARGETS:
+        newest = db.scalar(f"SELECT MAX({column}) FROM {table} WHERE {where}")
         if not newest:
             raise StaleDataError(f"{table} is empty: nothing to screen")
         hours = age_hours(newest)
@@ -74,7 +75,9 @@ def load_snapshots(db: Database, run_date: str) -> list[AssetSnapshot]:
     500 assets is 500 round trips for data that fits in a few indexed scans.
     """
     universe_date = db.scalar(
-        "SELECT MAX(snapshot_date) FROM universe_snapshot WHERE snapshot_date <= ?", (run_date,)
+        "SELECT MAX(snapshot_date) FROM universe_snapshot "
+        "WHERE snapshot_date <= ? AND exchange = 'binance'",
+        (run_date,),
     )
     if not universe_date:
         return []
@@ -205,8 +208,11 @@ def _index_by_asset(
 
 def _latest_derivatives(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
     """Most recent derivatives row per symbol, on or before run_date."""
+    # Binance's newest timestamp, not the table's. Hyperliquid writes this table
+    # hourly, and its newer ts would match no Binance row at all -- every OI and
+    # perp-volume input would read as missing (D-050).
     latest_ts = db.scalar(
-        "SELECT MAX(ts_utc) FROM derivatives_snapshot WHERE ts_utc <= ?",
+        "SELECT MAX(ts_utc) FROM derivatives_snapshot WHERE ts_utc <= ? AND exchange = 'binance'",
         (f"{run_date}T23:59:59Z",),
     )
     if not latest_ts:
