@@ -16,6 +16,9 @@ universe:
   # CoinGecko pages of 250 => 8 pages ~= top 2000 by market cap.
   coingecko_pages: 8
   coingecko_page_pause_seconds: 3.0   # observed: 1.2s still 429s on the free tier
+  # "demo" = the free Demo key (api.coingecko.com, x-cg-demo-api-key).
+  # "pro"  = a paid key (pro-api.coingecko.com, x-cg-pro-api-key). D-054.
+  coingecko_plan: "demo"
 
 http:
   timeout_seconds: 20.0

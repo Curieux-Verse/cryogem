@@ -19,10 +19,11 @@ from src.collectors.binance import (
     is_screenable_perp,
 )
 from src.collectors.coinalyze import CoinalyzeLiquidationCollector, previous_day_window
-from src.collectors.coingecko import CoinGeckoCollector
+from src.collectors.coingecko import CoinGeckoCollector, coingecko_endpoint
 from src.collectors.registry import refuse_as_of, resolve
 from src.collectors.defillama import DefiLlamaCollector
 from src.collectors.hyperliquid import HyperliquidCollector
+from src.config import get_config
 from src.symbols import funding_apr, parse_symbol, parse_universe
 from tests.conftest import load_fixture
 
@@ -132,6 +133,35 @@ class TestCoinalyzeWindow:
     def test_an_empty_history_writes_no_reading_not_a_zero(self):
         raw = {"BTCUSDT_PERP.A": {"symbol": "BTCUSDT_PERP.A", "history": []}}
         assert CoinalyzeLiquidationCollector().transform(raw, AS_OF) == []
+
+
+class TestCoinGeckoPlan:
+    """D-054. Demo and Pro keys look alike, but each works only on its own host."""
+
+    @staticmethod
+    def _settings(plan: str):
+        settings = get_config().settings
+        universe = settings.universe.model_copy(update={"coingecko_plan": plan})
+        return settings.model_copy(update={"universe": universe})
+
+    def test_a_demo_key_goes_to_the_public_host_with_the_demo_header(self):
+        base, headers = coingecko_endpoint(self._settings("demo"), "CG-example")
+        assert base == "https://api.coingecko.com/api/v3"
+        assert headers == {"x-cg-demo-api-key": "CG-example"}
+
+    def test_a_pro_key_goes_to_the_pro_host_with_the_pro_header(self):
+        base, headers = coingecko_endpoint(self._settings("pro"), "CG-example")
+        assert base == "https://pro-api.coingecko.com/api/v3"
+        assert headers == {"x-cg-pro-api-key": "CG-example"}
+
+    def test_no_key_is_keyless_on_the_public_host_whatever_the_plan(self):
+        assert coingecko_endpoint(self._settings("pro"), None) == (
+            "https://api.coingecko.com/api/v3",
+            {},
+        )
+
+    def test_the_shipped_setting_is_the_free_demo_plan(self):
+        assert get_config().settings.universe.coingecko_plan == "demo"
 
 
 class TestFundingNormalisation:

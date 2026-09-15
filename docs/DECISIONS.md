@@ -1472,3 +1472,21 @@ Three defects in `db/writes.upsert`:
   and `lag_seconds` on every hourly run, so "how late did we see it" became "how
   old is it", and all 74 rows shared one fetch time. Columns in `FIRST_SEEN` are
   never updated after insert.
+
+---
+
+## D-054 — The CoinGecko plan is configured, not inferred from the key
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+With any key set, the collector switched to `pro-api.coingecko.com` and the
+`x-cg-pro-api-key` header. The free key CoinGecko issues is a **Demo** key, which
+is accepted only on `api.coingecko.com` with `x-cg-demo-api-key`. Adding the free
+key would therefore have failed page 1, which re-raises: the whole collector
+fails, no asset has a market cap, and every asset fails L1_NO_MCAP -- a worse
+day than running keyless.
+
+The two key kinds look alike (both begin `CG-`), so the prefix cannot choose.
+**Rule.** `universe.coingecko_plan` in `config/settings.yaml` (`demo`, the
+default, or `pro`) decides host and header. No key means keyless on the public
+host, whatever the setting.

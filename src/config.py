@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, PrivateAttr, field_validator, model_validator
@@ -223,6 +223,9 @@ class UniverseSettings(BaseModel):
     quote_asset: str
     coingecko_pages: int
     coingecko_page_pause_seconds: float
+    # Which CoinGecko plan COINGECKO_API_KEY belongs to. The two kinds of key look
+    # alike and each works only on its own host (D-054).
+    coingecko_plan: Literal["demo", "pro"] = "demo"
 
 
 class HttpSettings(BaseModel):

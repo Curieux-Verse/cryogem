@@ -48,6 +48,21 @@ def _f(value: Any) -> float | None:
     return parsed if parsed == parsed else None
 
 
+def coingecko_endpoint(settings: Any, key: str | None) -> tuple[str, dict[str, str]]:
+    """Host and auth header for the configured CoinGecko plan (D-054).
+
+    Demo keys (the free tier) and Pro keys look alike -- both begin 'CG-' -- but
+    each is accepted only on its own host with its own header. A Demo key sent to
+    the Pro host is refused on page 1, which fails the whole collector, and every
+    asset then fails L1_NO_MCAP.
+    """
+    if not key:
+        return settings.endpoints["coingecko"], {}
+    if settings.universe.coingecko_plan == "pro":
+        return settings.endpoints["coingecko_pro"], {"x-cg-pro-api-key": key}
+    return settings.endpoints["coingecko"], {"x-cg-demo-api-key": key}
+
+
 class CoinGeckoCollector(BaseCollector):
     """Daily market data for roughly the top 2000 assets by market cap."""
 
@@ -58,10 +73,7 @@ class CoinGeckoCollector(BaseCollector):
     async def fetch(self, as_of: datetime) -> list[dict]:
         universe = self.config.settings.universe
         key = self.config.secrets.coingecko_api_key
-        base = self.config.settings.endpoints[
-            "coingecko_pro" if key else "coingecko"
-        ]
-        headers = {"x-cg-pro-api-key": key} if key else {}
+        base, headers = coingecko_endpoint(self.config.settings, key)
         if not key:
             self.log.info(
                 "coingecko_free_tier",
