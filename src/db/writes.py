@@ -59,6 +59,26 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
 # Append-only tables: never UPDATE, only INSERT OR IGNORE.
 APPEND_ONLY = frozenset({"journal_entry", "forward_return"})
 
+#: Columns an upsert never overwrites with NULL. Only same-day re-runs can hit
+#: this (the date is in every key), and there a NULL means the enrichment call
+#: failed this time -- a rate-limited funding-history read -- not that the value
+#: went away. Without this, the re-run blanked what the first run got (D-053).
+KEEP_WHEN_NULL: dict[str, frozenset[str]] = {
+    "universe_snapshot": frozenset({"funding_interval_hours"}),
+}
+
+#: Columns written once and never updated: first-seen measurements. A news
+#: item's lag is when WE first saw it; a later run re-seeing the item turned it
+#: into the item's age, and every row shared the latest fetch time (D-053).
+FIRST_SEEN: dict[str, frozenset[str]] = {
+    "news_item": frozenset({"fetched_at_utc", "lag_seconds"}),
+}
+
+#: Rows per statement batch. On Turso one batch is one HTTP request, and the
+#: klines backfill wrote 356k rows -- far past what one request should carry.
+#: Matches the batch size src/ops/migrate.py already copies in.
+BATCH_ROWS = 500
+
 
 def json_dump(value: Any) -> str | None:
     """Serialise a dict/list column. None stays None -- never the string 'null'."""
@@ -122,7 +142,13 @@ def upsert(db: Database, table: str, rows: Sequence[dict[str, Any]]) -> int:
     if table in APPEND_ONLY:
         sql = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({placeholders})"
     else:
-        updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in keys)
+        keep = KEEP_WHEN_NULL.get(table, frozenset())
+        frozen = FIRST_SEEN.get(table, frozenset())
+        updates = ", ".join(
+            f"{c}=COALESCE(excluded.{c}, {table}.{c})" if c in keep else f"{c}=excluded.{c}"
+            for c in cols
+            if c not in keys and c not in frozen
+        )
         conflict = ", ".join(keys)
         sql = (
             f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
@@ -132,7 +158,9 @@ def upsert(db: Database, table: str, rows: Sequence[dict[str, Any]]) -> int:
         )
 
     payload = [[row.get(c) for c in cols] for row in rows]
-    written = db.executemany(sql, payload)
+    written = 0
+    for start in range(0, len(payload), BATCH_ROWS):
+        written += db.executemany(sql, payload[start : start + BATCH_ROWS])
     _bump_stats(db, table, written)
     return written
 
@@ -205,6 +233,9 @@ def latest_instant(db: Database, table: str, column: str = "fetched_at_utc") -> 
 
 __all__ = [
     "APPEND_ONLY",
+    "BATCH_ROWS",
+    "FIRST_SEEN",
+    "KEEP_WHEN_NULL",
     "PRIMARY_KEYS",
     "deterministic_id",
     "json_dump",

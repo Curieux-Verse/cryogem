@@ -54,10 +54,45 @@ from src.db.writes import record_collector_run
 from src.logging_setup import get_logger, scrub_secrets
 from src.timeutil import utc_now, utc_now_iso
 
-# HTTP statuses worth retrying: rate limits, IP bans, and server-side faults.
-# A 400/401/403/404 is a bug in our request; retrying it just wastes the budget
-# and hides the error.
-RETRYABLE_STATUS = frozenset({408, 418, 425, 429, 500, 502, 503, 504})
+# HTTP statuses worth retrying: rate limits and server-side faults. A
+# 400/401/403/404 is a bug in our request; retrying it just wastes the budget
+# and hides the error. 418 is NOT here: it is Binance's IP ban, and every call
+# made after one lengthens the ban (D-052).
+RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+#: Longest server-requested wait honoured before a retry. Past this, failing
+#: loudly beats sleeping through the job's timeout.
+MAX_RETRY_AFTER_SECONDS = 120.0
+
+
+def retry_after_seconds(value: str | None) -> float | None:
+    """A Retry-After header given in seconds. None when absent or an HTTP date."""
+    if not value:
+        return None
+    try:
+        seconds = float(value.strip())
+    except ValueError:
+        return None
+    return max(0.0, seconds)
+
+
+def server_hinted_wait(fallback: Any) -> Any:
+    """A tenacity wait that obeys the server's Retry-After, else `fallback`.
+
+    CoinGecko's free tier answers a burst with a 429 and a cool-down of about a
+    minute. The exponential backoff alone gives up after ~15s in total, which
+    truncated pagination on every busy morning (D-052).
+    """
+
+    def wait(retry_state: Any) -> float:
+        outcome = retry_state.outcome
+        exc = outcome.exception() if outcome is not None else None
+        hint = getattr(exc, "retry_after", None)
+        if hint is not None:
+            return min(hint, MAX_RETRY_AFTER_SECONDS)
+        return fallback(retry_state)
+
+    return wait
 
 
 @dataclass
@@ -110,10 +145,24 @@ class PermanentHTTPError(Exception):
 class RetryableHTTPError(Exception):
     """A transient HTTP failure. Distinct from a permanent one on purpose."""
 
-    def __init__(self, status_code: int, url: str, body: str = "") -> None:
+    def __init__(
+        self, status_code: int, url: str, body: str = "", retry_after: float | None = None
+    ) -> None:
         # The path only. See redact_url: a query string can BE the credential.
         super().__init__(f"HTTP {status_code} from {redact_url(url)}: {body[:200]}")
         self.status_code = status_code
+        self.url = redact_url(url)
+        #: Seconds the server asked us to wait, when it said.
+        self.retry_after = retry_after
+
+
+class IPBannedError(Exception):
+    """HTTP 418: the source has banned this IP. No further call this run."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(
+            f"HTTP 418 from {redact_url(url)}: IP banned; no further calls this run"
+        )
         self.url = redact_url(url)
 
 
@@ -159,6 +208,9 @@ class BaseCollector(ABC):
         #: Earliest monotonic time the next call to an evenly spaced source may go.
         self._next_slot: dict[str, float] = {}
         self._warnings: list[str] = []
+        #: Set by a 418. Every later request raises without touching the network,
+        #: because each call made during a Binance ban extends it (D-052).
+        self._banned = False
 
     # -- infrastructure ------------------------------------------------------
     def _build_limiter(self) -> Limiter | None:
@@ -241,17 +293,29 @@ class BaseCollector(ABC):
 
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(http.max_attempts),
-            wait=wait_exponential(
-                multiplier=http.backoff_initial_seconds, max=http.backoff_max_seconds
+            wait=server_hinted_wait(
+                wait_exponential(
+                    multiplier=http.backoff_initial_seconds, max=http.backoff_max_seconds
+                )
             ),
             retry=retry_if_exception(_is_retryable),
             reraise=True,
         ):
             with attempt:
+                if self._banned:
+                    raise IPBannedError(str(url))
                 await self._acquire(limiter_key)
                 response = await client.request(method, url, **kwargs)
+                if response.status_code == 418:
+                    self._banned = True
+                    raise IPBannedError(str(response.url))
                 if response.status_code in RETRYABLE_STATUS:
-                    raise RetryableHTTPError(response.status_code, str(response.url), response.text)
+                    raise RetryableHTTPError(
+                        response.status_code,
+                        str(response.url),
+                        response.text,
+                        retry_after=retry_after_seconds(response.headers.get("Retry-After")),
+                    )
                 if response.is_error:
                     # NOT raise_for_status(): httpx builds its message from the
                     # full request URL, query string included, and a credential
@@ -361,7 +425,11 @@ class BaseCollector(ABC):
 
 
 __all__ = [
+    "IPBannedError",
+    "MAX_RETRY_AFTER_SECONDS",
     "PermanentHTTPError",
+    "retry_after_seconds",
+    "server_hinted_wait",
     "redact_url",
     "RETRYABLE_STATUS",
     "BaseCollector",

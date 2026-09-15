@@ -1430,3 +1430,45 @@ they never reached the run status: a 418 ban that failed every symbol recorded
 stops the screen for the day -- the journal and Layer 3 read these bars, so a
 screen on a mostly-missing price history is worse than none. Nothing is lost:
 bars are history, and the next run's seven-day overlap fetches them again.
+
+---
+
+## D-052 — Rate-limit guidance is obeyed: a 418 stops the run, Retry-After is honoured
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+418 and 429 were retried like any 5xx: five attempts on an exponential backoff
+worth about fifteen seconds, ignoring `Retry-After`. Both were wrong:
+
+- **418 is Binance's IP ban**, and Binance lengthens a ban for every request made
+  during it. The per-symbol loops (open interest, klines) then carried on, one
+  banned call per symbol.
+- **429 from CoinGecko's free tier** asks for a cool-down of about a minute.
+  Fifteen seconds of backoff gave up first, which is how pagination truncated.
+
+**Rule.** 418 is not retried: it sets a flag on the collector, and every later
+request raises `IPBannedError` without touching the network, so the run fails
+(klines past its 20% ceiling, D-051) instead of extending the ban. A retryable
+response carrying `Retry-After` in seconds waits that long, capped at 120s, in
+place of the exponential step.
+
+---
+
+## D-053 — What an upsert may overwrite, and how much it sends at once
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+Three defects in `db/writes.upsert`:
+
+- **Batching.** Every row went in one `executemany`, which on Turso is one
+  libSQL HTTP request. The klines backfill wrote 356,358 rows that way. Now
+  batches of 500, the size `ops/migrate.py` already copies in.
+- **NULL over a good value.** A same-day re-run whose funding-history read was
+  rate-limited wrote NULL over the interval the first run had derived. Columns in
+  `KEEP_WHEN_NULL` (so far `universe_snapshot.funding_interval_hours`) update
+  through `COALESCE(new, old)`. The date is in every key, so this can only ever
+  keep a value from the same day.
+- **First-seen measurements rewritten.** `news_item` re-stamped `fetched_at_utc`
+  and `lag_seconds` on every hourly run, so "how late did we see it" became "how
+  old is it", and all 74 rows shared one fetch time. Columns in `FIRST_SEEN` are
+  never updated after insert.
