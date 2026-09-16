@@ -78,6 +78,8 @@ Settings → Secrets and variables → Actions → New repository secret.
 | `HEALTHCHECK_JOURNAL` | recommended | separate check |
 | `HEALTHCHECK_SCREEN` | recommended | separate check |
 | `HEALTHCHECK_SUPPLY` | recommended | separate check, for `collect-supply` |
+| `HEALTHCHECK_SITE` | recommended | separate check, pinged after the Pages deploy |
+| `BACKUP_PASSPHRASE` | recommended | without it `backup` keeps a 30-day artifact and publishes no release |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | no | notification only |
 
 ---
@@ -136,14 +138,22 @@ stays for manual use only — the first bootstrap, or a re-run after a failed da
 |---|---|---|---|
 | collect-daily | `10 3 * * *` | `collect-daily.yml` | `{"ref":"main","inputs":{"scheduled_for":"03:10"}}` |
 | collect-hourly | `25 * * * *` | `collect-hourly.yml` | `{"ref":"main","inputs":{"scheduled_for":":25"}}` |
-| journal | `10 6 * * *` | `journal.yml` | `{"ref":"main","inputs":{"scheduled_for":"06:10"}}` |
 | backup | `0 5 * * 0` | `backup.yml` | `{"ref":"main"}` |
 
-**Journal is 06:10, not 04:10** (D-045). It journals *today's* ranking, so it must
-fire after the screen finishes. With the supply job the screen now ends around
-04:30, and in the worst case (every job running to its timeout: 20 + 90 + 20
-minutes from 03:10) at 05:20. A journal that fires first finds no ranking and
-skips the day — and a skipped journal day can never be written afterwards.
+**The journal is not a job here either** (D-067). It runs as the `journal` job
+inside `screen.yml`, chained to the screen that produced the ranking, so it
+cannot fire early. It used to need a second trigger timed by hand to land after
+the screen — 06:10, not 04:10, because the supply job pushed the screen to
+~04:30 and to 05:20 in the worst case — and any screen that ran later than the
+guess lost the day. A skipped journal day can never be written afterwards: the
+entry price is that day's close, and the position is only honest if it was
+recorded before the outcome was known. `journal.yml` stays for manual re-runs.
+
+**Never dispatch `collect-supply` while `collect-daily` is running.** Both use
+the `collect-supply` concurrency group, so the manual run queues behind the
+daily job rather than reading GoPlus alongside it — and a THIRD request cancels
+the one already queued. Dispatch it only when the Actions tab shows no
+`collect-daily` in flight.
 
 `scheduled_for` is what makes the trigger-lag panel on the Health page work,
 and that panel is how a stray `on: schedule` is caught after it is merged.
@@ -193,6 +203,18 @@ is exactly where a silent chain break would show up.
 | journal | `HEALTHCHECK_JOURNAL` | **25 hours** | 1 hour |
 | screen | `HEALTHCHECK_SCREEN` | **25 hours** | 1 hour |
 | collect-supply | `HEALTHCHECK_SUPPLY` | **25 hours** -- it must run daily (D-042) | 1 hour |
+| build-site | `HEALTHCHECK_SITE` | **25 hours** | 2 hours |
+
+The site check is the only one that sees the END of the chain (D-067). Every
+other ping means a job succeeded; this one means the dashboard a reader opens
+was actually rebuilt. Pages being disabled, a rejected deploy or an artifact
+that never uploaded leaves `collect-daily`, `screen` and `publish` all green
+while the site serves last week's numbers. Its grace is 2 hours, not 1: it
+fires at the end of a four-workflow chain.
+
+The journal check is pinged by the `journal` job inside `screen` (D-067), not by
+`journal.yml`. Its period stays 25 hours: one screen a day, one journal entry
+set a day.
 
 The supply check (holders and unlocks, D-040) is pinged by the `supply` job inside
 `collect-daily` — **no cron-job.org job of its own** (D-045). It runs daily as a

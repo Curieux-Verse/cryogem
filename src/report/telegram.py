@@ -156,8 +156,10 @@ def send_daily_summary(run_date: str | None = None) -> bool:
     if not is_configured():
         log.warning("telegram_not_configured", effect="daily summary skipped")
         return False
-    date = run_date or today_utc()
     with get_db() as db:
+        # The newest screen, not today: a summary of an empty day reads as a
+        # day with no survivors (D-067).
+        date = run_date or daily.latest_screen_date(db) or today_utc()
         payload = daily.gather(db, date)
     return send_message(format_summary(payload))
 

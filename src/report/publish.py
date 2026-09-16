@@ -650,7 +650,7 @@ def publish_all(run_date: str | None = None) -> list[tuple[str, int]]:
         # day whenever the screen had run under another date -- a backfill, a
         # manual re-publish, a screen that failed -- and pruned every asset page
         # to match, with a fresh timestamp that kept the stale banner silent.
-        date = run_date or db.scalar("SELECT MAX(run_date) FROM layer1_result")
+        date = run_date or daily.latest_screen_date(db)
         screened_count = (
             db.scalar("SELECT COUNT(*) FROM layer1_result WHERE run_date = ?", (date,))
             if date

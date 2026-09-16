@@ -736,11 +736,21 @@ def _quality_section(quality: dict[str, Any]) -> list[str]:
     return lines
 
 
+def latest_screen_date(db: Database) -> str | None:
+    """The newest day a screen actually ran, or None if none ever has.
+
+    The report, the Telegram summary and the publisher all default to this
+    rather than to today (D-064, D-067). Today is a guess about what happened;
+    this is a reading of what did.
+    """
+    return db.scalar("SELECT MAX(run_date) FROM layer1_result")
+
+
 def write_report(run_date: str | None = None) -> Path:
     """Render the report to reports/YYYY-MM-DD.md and return its path."""
     cfg = get_config()
-    date = run_date or today_utc()
     with get_db() as db:
+        date = run_date or latest_screen_date(db) or today_utc()
         payload = gather(db, date)
     text = render(payload)
 

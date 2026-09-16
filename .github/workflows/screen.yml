@@ -35,10 +35,16 @@ permissions:
 
 jobs:
   screen:
-    # Never screen on the back of a failed collection.
+    # Never screen on the back of a failed collection -- and never on the back
+    # of an HOURLY one (D-067). collect-daily serves both tiers, and an hourly
+    # run writes derivatives only: screening it produced a full run, stamped
+    # today, built on yesterday's prices, market caps and holder readings.
+    # workflow_run carries no inputs, so the tier is read from the run's title,
+    # which collect-daily sets as `collect-daily tier=<tier>`.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+      contains(github.event.workflow_run.display_title, 'tier=daily'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -123,6 +129,68 @@ jobs:
         run: |
           if [ -z "$HC" ]; then
             echo "::notice::HEALTHCHECK_SCREEN is unset; skipping healthcheck ping"
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+
+  # The journal, in the same workflow as the screen that produced the ranking
+  # (D-067).
+  #
+  # As a workflow of its own it needed a SECOND external trigger, timed by hand
+  # to land after the screen. When the screen ran late -- a slow supply job, a
+  # retried collection -- the journal found no ranking and skipped the day, and
+  # a skipped day can never be written afterwards: the entry price is that
+  # day's close, and the position is only honest if it was recorded before the
+  # outcome was known. Chained to the screen it cannot be early.
+  #
+  # Not a workflow_run workflow, a JOB: collect-daily -> screen -> publish ->
+  # build-site already uses GitHub's three workflow_run levels (D-045).
+  #
+  # continue-on-error, like the supply job in collect-daily: `publish` triggers
+  # on THIS workflow's conclusion, so a journal failure would also cost the day
+  # its dashboard. The missed HEALTHCHECK_JOURNAL ping is the signal, and the
+  # red job is visible on a green workflow.
+  #
+  # journal.yml stays the manual re-run path. Keep the steps in step with it.
+  journal:
+    needs: screen
+    continue-on-error: true
+    concurrency:
+      group: journal
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Write entries and backfill elapsed horizons
+        run: |
+          if [ -n "$RUN_DATE" ]; then
+            python -m src.cli journal --date "$RUN_DATE"
+          else
+            python -m src.cli journal
+          fi
+        env:
+          RUN_DATE: ${{ inputs.date }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      - name: Healthcheck ping
+        # Guarded in the shell, not in `if:` (D-033). On success only: with
+        # continue-on-error the workflow stays green, so the missed ping is how
+        # a journal gap is seen.
+        if: success()
+        env:
+          HC: ${{ secrets.HEALTHCHECK_JOURNAL }}
+        run: |
+          if [ -z "$HC" ]; then
+            echo "::notice::HEALTHCHECK_JOURNAL is unset; skipping healthcheck ping"
             exit 0
           fi
           curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"

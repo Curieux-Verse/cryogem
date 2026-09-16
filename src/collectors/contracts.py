@@ -46,6 +46,7 @@ from datetime import datetime
 from typing import Any
 
 from src.collectors.base import BaseCollector
+from src.collectors.coingecko import coingecko_endpoint
 from src.db.connection import get_db
 from src.db.writes import json_dump, upsert
 from src.timeutil import utc_now_iso
@@ -185,8 +186,12 @@ class AssetContractCollector(BaseCollector):
         settings = self.config.settings
         screened = self._screened_ids()
         confirmed = self._confirmed_origins()
+        # The same host-and-header pair the market collector uses (D-054). Sent
+        # keyless, /coins/{id} is limited to ~10 a minute, which is what makes
+        # max_origin_lookups_per_run small and the origin table slow to fill.
+        cg_base, cg_headers = coingecko_endpoint(settings, self.config.secrets.coingecko_api_key)
 
-        async with self.client(settings.endpoints["coingecko"]) as client:
+        async with self.client(cg_base, headers=cg_headers) as client:
             asset_platforms = await self.request_json(client, "GET", "/asset_platforms")
             coins = await self.request_json(
                 client, "GET", "/coins/list", params={"include_platform": "true"}
@@ -222,7 +227,7 @@ class AssetContractCollector(BaseCollector):
         looked_up: dict[str, str | None] = {}
         failures = 0
         if pending:
-            async with self.client(settings.endpoints["coingecko"]) as client:
+            async with self.client(cg_base, headers=cg_headers) as client:
                 for cid in pending[:budget]:
                     try:
                         detail = await self.request_json(

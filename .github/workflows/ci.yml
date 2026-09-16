@@ -45,7 +45,10 @@ jobs:
           # "$VAR" in the script, where it is data the shell never re-parses.
           # This guard exists because the unsafe form is the one that reads
           # more naturally, so it comes back.
-          if grep -rnE '^[[:space:]]*(run:|-[[:space:]]+)?.*\$\{\{[[:space:]]*(inputs|github\.event\.(inputs|issue|comment|pull_request))'                .github/workflows/ | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|if:|[A-Z_]+:)' ; then
+          # `run-name:` is exempt: it is a display string GitHub renders, never
+          # a shell script, and it is how collect-daily reports its tier to
+          # screen (D-067).
+          if grep -rnE '^[[:space:]]*(run:|-[[:space:]]+)?.*\$\{\{[[:space:]]*(inputs|github\.event\.(inputs|issue|comment|pull_request))'                .github/workflows/ | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|if:|run-name:|[A-Z_]+:)' ; then
             echo "::error::a dispatch input is interpolated into a run: block. Pass it via env: and read \"\$VAR\"."
             exit 1
           fi
@@ -105,6 +108,32 @@ jobs:
         run: python -m pytest tests/test_layer_isolation.py -q
         env:
           PYTHONIOENCODING: utf-8
+
+  # The dashboard is a third of the codebase and CI never compiled it: a type
+  # error or a broken build reached main and was found by build-site failing
+  # AFTER publish had already committed the day's data (D-067).
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: Types
+        run: npx tsc --noEmit
+        working-directory: web
+
+      # The same command build-site runs, so a failure here is a failure there.
+      - name: Build
+        run: npm run build
+        working-directory: web
 
   secrets-scan:
     runs-on: ubuntu-latest

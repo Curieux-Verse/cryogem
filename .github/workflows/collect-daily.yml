@@ -25,6 +25,12 @@
 # =============================================================================
 name: collect-daily
 
+# The tier, in the run's title. workflow_run events carry no inputs, so this is
+# the only way `screen` can tell a daily collection from an hourly one (D-067).
+# Keep the `tier=` spelling: `screen` matches on it, and "collect-daily hourly"
+# would otherwise contain the word "daily".
+run-name: collect-daily tier=${{ inputs.tier || 'daily' }}
+
 on:
   workflow_dispatch:
     inputs:

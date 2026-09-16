@@ -1744,3 +1744,47 @@ as they already were in `latest.json`.
   not 30000000.0000); "Below ATH" shows a positive figure under a label that
   already says "below"; a missing return vs BTC is muted, not coloured as a loss.
 - **Types.** `market.ath_date` is a string; `Manifest` is typed.
+
+---
+
+## D-067 — The chain runs itself, end to end
+
+**Date:** 2026-09-16 · **Status:** accepted
+
+- **The journal moved into `screen.yml`** as a `needs: screen` job. As its own
+  workflow it needed a second external trigger, timed by hand to land after the
+  screen; any screen that ran later than that guess lost the day, and a skipped
+  journal day can never be written afterwards. It is `continue-on-error`, like
+  the supply job in `collect-daily` (D-045), because `publish` triggers on this
+  workflow's conclusion and a journal gap must not also cost the day's
+  dashboard. The missed `HEALTHCHECK_JOURNAL` ping is the signal. `journal.yml`
+  stays the manual re-run path.
+- **`screen` only follows a DAILY collect.** `collect-daily` serves both tiers,
+  and an hourly run writes derivatives only, so screening it produced a full run
+  stamped today from yesterday's prices, market caps and holder readings.
+  `workflow_run` carries no inputs, so `collect-daily` reports its tier in
+  `run-name` as `collect-daily tier=<tier>` and `screen` matches on
+  `tier=daily`. The `tier=` spelling matters: "collect-daily hourly" contains
+  the word "daily". The CI guard against interpolating an input into a `run:`
+  block now exempts `run-name:`, which is a display string, never a shell script.
+- **`HEALTHCHECK_SITE` after the Pages deploy.** The only check that sees the end
+  of the chain. Everything upstream can be green while Pages is disabled or the
+  deploy is rejected, and the site then serves old data with nothing amiss.
+- **`build-site` on pushes to `main` only.** Pages serves one site, so a push to
+  a feature branch deployed that branch's dashboard over the live one.
+- **The report is committed.** `reports/<date>.md` was written only as a side
+  effect of the Telegram step, on a runner that is then discarded, so `reports/`
+  held nothing unless Telegram was configured. The publish job now writes it and
+  commits it beside the JSON.
+- **One date rule.** The report, the Telegram summary and the publisher all
+  default to the newest screen on file rather than to today (extends D-064).
+- **`CRYPTOPANIC_AUTH_TOKEN` reaches `collect-hourly`**, which is the tier that
+  runs `news`; and `asset_contracts` now sends the CoinGecko key its origin
+  lookups are rate-limited without (D-054).
+- **The backup stops being public.** A release asset on a public repo is public,
+  and the dump is the whole database including the journal and the holdout audit
+  log. It is encrypted with `BACKUP_PASSPHRASE` (gpg, AES256) before release;
+  with no passphrase there is no release, only a 30-day artifact and a warning.
+- **CI builds the dashboard.** A `web` job runs `npm ci`, `tsc --noEmit` and the
+  same `npm run build` as `build-site`, which used to be found failing only
+  after `publish` had committed the day's data.

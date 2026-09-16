@@ -17,6 +17,11 @@ on:
     workflows: ["screen"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      date:
+        description: "Run date YYYY-MM-DD (default: the newest screen on file)"
+        required: false
+        default: ""
 
 concurrency:
   group: publish
@@ -40,9 +45,37 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
 
+      # RUN_DATE through env:, never interpolated into the script (D-032). An
+      # absent date is a missing flag, not an empty --date, which the CLI
+      # rejects; with no flag the publisher bakes the newest screen on file and
+      # refuses a date that has none (D-064).
       - name: Bake JSON
-        run: python -m src.cli publish
+        run: |
+          if [ -n "$RUN_DATE" ]; then
+            python -m src.cli publish --date "$RUN_DATE"
+          else
+            python -m src.cli publish
+          fi
         env:
+          RUN_DATE: ${{ inputs.date }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
+      # The markdown report, committed beside the JSON (D-067). It was written
+      # only as a side effect of the Telegram step in `screen`, on a runner that
+      # is then discarded -- so reports/ held nothing, and the one artefact
+      # meant to be readable months later existed only if Telegram was
+      # configured. Same date rule as the bake above.
+      - name: Write the daily report
+        run: |
+          if [ -n "$RUN_DATE" ]; then
+            python -m src.cli report --date "$RUN_DATE"
+          else
+            python -m src.cli report
+          fi
+        env:
+          RUN_DATE: ${{ inputs.date }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           PYTHONIOENCODING: utf-8
@@ -67,7 +100,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "data: daily screen ${{ github.run_id }}"
-          file_pattern: "data/public/**"
+          file_pattern: "data/public/** reports/**"
           commit_user_name: gem-screener-bot
           commit_user_email: actions@github.com
           skip_dirty_check: false

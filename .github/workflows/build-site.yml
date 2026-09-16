@@ -21,6 +21,9 @@ on:
     workflows: ["publish"]
     types: [completed]
   push:
+    # main only. Pages serves ONE site, so a push to a feature branch used to
+    # deploy that branch's dashboard over the live one (D-067).
+    branches: [main]
     paths:
       - "data/public/**"
       - "web/**"
@@ -96,3 +99,20 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      # The END of the chain, and the only check that sees it (D-067). Every
+      # other ping says a job succeeded; this one says the dashboard the reader
+      # actually opens was rebuilt. collect-daily, screen and publish can all be
+      # green while Pages is disabled, the deploy is rejected, or the artifact
+      # never uploads -- and the site then sits on old data with nothing amiss.
+      - name: Healthcheck ping
+        # Guarded in the shell, not in `if:` (D-033).
+        if: success()
+        env:
+          HC: ${{ secrets.HEALTHCHECK_SITE }}
+        run: |
+          if [ -z "$HC" ]; then
+            echo "::notice::HEALTHCHECK_SITE is unset; skipping healthcheck ping"
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
