@@ -42,7 +42,12 @@ function Histogram({ values, label }: { values: number[]; label: string }) {
   if (values.length === 0) {
     return <p className="text-sm text-muted">No completed returns for {label} yet.</p>;
   }
-  const edges = [-1, -0.5, -0.3, -0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2, 0.3, 0.5, 10];
+  // Open-ended at both ends (D-066). The old edges ran from -100% to +1000%,
+  // but a return vs BTC falls below -100% whenever the asset collapses while
+  // BTC rises -- and those, the worst outcomes, were silently not drawn.
+  const edges = [
+    -Infinity, -0.5, -0.3, -0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2, 0.3, 0.5, 1, Infinity,
+  ];
   const buckets = edges.slice(0, -1).map((low, index) => {
     const high = edges[index + 1] ?? Infinity;
     return {
@@ -51,6 +56,8 @@ function Histogram({ values, label }: { values: number[]; label: string }) {
       n: values.filter((v) => v >= low && v < high).length,
     };
   });
+  const bucketLabel = (low: number, high: number) =>
+    low === -Infinity ? `< ${signedPct(high, 0)}` : signedPct(low, 0);
   const peak = Math.max(...buckets.map((b) => b.n), 1);
 
   return (
@@ -61,7 +68,7 @@ function Histogram({ values, label }: { values: number[]; label: string }) {
       <ul className="space-y-0.5">
         {buckets.map((bucket) => (
           <li key={bucket.low} className="flex items-center gap-2 text-xs">
-            <span className="num w-16 text-muted">{signedPct(bucket.low, 0)}</span>
+            <span className="num w-16 text-muted">{bucketLabel(bucket.low, bucket.high)}</span>
             <span className="h-3 flex-1 bg-line/40">
               <span
                 className={`block h-full ${bucket.low < 0 ? "bg-fail/70" : "bg-pass/70"}`}
@@ -323,7 +330,11 @@ export default function Journal() {
                           </td>
                           <td
                             className={`num py-2 pr-3 ${
-                              (outcome?.return_vs_btc ?? 0) > 0 ? "text-pass" : "text-fail"
+                              outcome?.return_vs_btc == null
+                                ? "text-muted"
+                                : outcome.return_vs_btc > 0
+                                  ? "text-pass"
+                                  : "text-fail"
                             }`}
                           >
                             {signedPct(outcome?.return_vs_btc ?? null)}

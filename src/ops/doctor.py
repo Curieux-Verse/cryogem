@@ -22,7 +22,7 @@ from typing import Any
 from src.config import get_config
 from src.db.connection import get_db
 from src.logging_setup import get_logger
-from src.timeutil import age_hours, today_utc, utc_now_iso
+from src.timeutil import add_days, age_hours, today_utc, utc_now_iso
 
 log = get_logger("ops.doctor")
 
@@ -36,6 +36,26 @@ FRESHNESS_TARGETS: tuple[tuple[str, str, str], ...] = (
     ("market_snapshot", "fetched_at_utc", "1 = 1"),
     ("universe_snapshot", "fetched_at_utc", "exchange = 'binance'"),
 )
+
+
+def failure_streaks(runs: list[dict[str, Any]]) -> dict[str, int]:
+    """Consecutive failures at the head of each collector's history.
+
+    `runs` must be ordered by collector, newest first. A success or a partial
+    ends the streak (D-065).
+    """
+    streaks: dict[str, int] = {}
+    ended: set[str] = set()
+    for run in runs:
+        name = run["collector_name"]
+        streaks.setdefault(name, 0)
+        if name in ended:
+            continue
+        if run["status"] == "failed":
+            streaks[name] += 1
+        else:
+            ended.add(name)
+    return streaks
 
 
 def run_diagnostics(max_age_hours: float | None = None) -> dict[str, Any]:
@@ -102,17 +122,18 @@ def run_diagnostics(max_age_hours: float | None = None) -> dict[str, Any]:
                 )
 
             # Repeated failure is different from a single flake.
-            failing = db.query(
-                "SELECT collector_name, COUNT(*) n FROM ("
-                "  SELECT collector_name, status FROM collector_run "
-                "  ORDER BY started_at_utc DESC LIMIT 30"
-                ") WHERE status='failed' GROUP BY collector_name HAVING n >= ?",
-                (cfg.thresholds.collectors.consecutive_failures_before_alert,),
+            # Per collector, consecutive (D-065). The old query counted failures
+            # among the last 30 runs of ALL collectors, so a busy hourly tier
+            # pushed a daily collector's repeated failures out of the window.
+            limit = cfg.thresholds.collectors.consecutive_failures_before_alert
+            recent_runs = db.query(
+                "SELECT collector_name, status FROM collector_run WHERE started_at_utc >= ? "
+                "ORDER BY collector_name, started_at_utc DESC",
+                (f"{add_days(today_utc(), -14)}T00:00:00Z",),
             )
-            for row in failing:
-                problems.append(
-                    f"{row['collector_name']} failed {row['n']} times in the last 30 runs"
-                )
+            for name, streak in sorted(failure_streaks(recent_runs).items()):
+                if streak >= limit:
+                    problems.append(f"{name} has failed its last {streak} runs")
 
             # -- screening output --------------------------------------------
             last_screen = db.scalar("SELECT MAX(run_date) FROM layer1_result")
@@ -133,4 +154,4 @@ def run_diagnostics(max_age_hours: float | None = None) -> dict[str, Any]:
     return {"lines": lines, "problems": problems, "ok": not problems}
 
 
-__all__ = ["FRESHNESS_TARGETS", "run_diagnostics"]
+__all__ = ["FRESHNESS_TARGETS", "failure_streaks", "run_diagnostics"]

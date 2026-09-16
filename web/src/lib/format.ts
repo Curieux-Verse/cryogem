@@ -42,6 +42,14 @@ export function price(value: number | null | undefined): string {
   return `$${value.toPrecision(4)}`;
 }
 
+/** A check threshold as written in thresholds.yaml: 30,000,000 and 0.3, never
+ *  30000000.0000 and 0.3000. */
+export function thresholdValue(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return DASH;
+  if (Number.isInteger(value)) return value.toLocaleString("en-US");
+  return String(Number(value.toFixed(4)));
+}
+
 /** Infinity arrives as a string, on purpose (DECISIONS D-012). */
 export function metric(value: MaybeInfinite, digits = 4): string {
   if (value === null) return DASH;

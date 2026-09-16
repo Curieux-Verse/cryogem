@@ -81,6 +81,7 @@ export interface RejectedAsset {
 export interface Rejected {
   schema_version: number;
   run_date: string;
+  generated_at_utc?: string;
   total_disqualified: number;
   ordering: string;
   groups: {
@@ -174,6 +175,7 @@ export interface EventRow {
 export interface Events {
   schema_version: number;
   run_date: string;
+  generated_at_utc?: string;
   window_days: number;
   events: EventRow[];
   note: string;
@@ -245,7 +247,7 @@ export interface AssetDetail {
     percentiles: Record<string, number | null>;
   } | null;
   layer3: Record<string, unknown> | null;
-  market: Record<string, number | null> | null;
+  market: MarketSnapshot | null;
   prices: { columns: string[]; rows: (string | number | null)[][] };
   events: EventRow[];
   news_context: {
@@ -260,8 +262,36 @@ export interface AssetDetail {
   }[];
 }
 
+/** market_snapshot as the asset file carries it. `ath_date` is a date string. */
+export interface MarketSnapshot {
+  price_usd: number | null;
+  market_cap_usd: number | null;
+  fdv_usd: number | null;
+  spot_volume_24h_usd: number | null;
+  circulating_supply: number | null;
+  total_supply: number | null;
+  max_supply: number | null;
+  ath_usd: number | null;
+  ath_date: string | null;
+  pct_below_ath: number | null;
+  price_change_24h_pct: number | null;
+}
+
+/** manifest.json. `asset_files` is the only way from a ticker to its file:
+ *  sanitising a ticker is not reversible (DECISIONS D-012). */
+export interface Manifest {
+  schema_version: number;
+  run_date: string;
+  generated_at_utc: string;
+  assets: number;
+  asset_files: Record<string, string>;
+  files: { name: string; bytes: number }[];
+  total_bytes: number;
+}
+
 export interface History {
   schema_version: number;
+  generated_at_utc?: string;
   window_days: number;
   days: {
     run_date: string;

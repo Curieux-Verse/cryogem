@@ -1681,3 +1681,66 @@ and BTC each fell back independently, up to a week apart.
   survivors met. It counts rows inside the reported top 15.
 - **Slippage.** Charged on entry only. Exits cross the book too, at the depth on
   file on the exit date.
+
+---
+
+## D-064 — Publish bakes the newest screen, and refuses an empty one
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+`publish` defaulted to today. A screen run under another date (a backfill, a
+manual dispatch) or a screen that had failed left today with no `layer1_result`
+rows, so publish baked a universe of zero, pruned every asset page to match, and
+stamped it with a fresh `generated_at_utc` -- which, with `run_date` also today,
+kept the stale banner silent. **Rule.** With no `--date`, publish bakes the newest
+screen on file; a date with no screen results is refused with exit 1; and the
+asset directory is never pruned against an empty set.
+
+Two shape fixes in the asset files: event rows now carry every field `EventRow`
+declares (without `event_id`, two events on one day shared a React key), and
+Layer 3's `setup_detected`, `break_confirmed` and `retest_confirmed` are booleans,
+as they already were in `latest.json`.
+
+---
+
+## D-065 — Ops tooling that is safe and complete
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+- **Backup.** `backtest_run`, the holdout audit log, was not in `TABLE_ORDER`, so a
+  restore silently reset the count of holdout looks. And the dump held only
+  INSERTs, so its own restore instruction failed with "no such table". It now
+  writes the schema first and covers every table; a test compares the list with
+  `schema.sql`.
+- **`migrate --verify`.** The append-only probe deleted a real journal row and
+  counted whether it survived -- safe only if the answer was the one nobody yet
+  knew. It now probes a scratch table with an identical trigger, drops it, and
+  separately checks the journal's triggers are installed.
+- **`doctor`.** "Consecutive failures" counted failures among the last 30 runs of
+  all collectors together. It now counts each collector's own unbroken streak.
+- **Secrets.** `HEALTHCHECK_SUPPLY` was used by two workflows but declared nowhere;
+  `HEALTHCHECK_SCREEN` was missing from `.env.example`. Both are declared, with the
+  new `HEALTHCHECK_SITE`.
+- **Daemon.** `scripts/run_collectors.py` used the 5-minute interval for every tier.
+  Each tier now runs at its own cadence (fast 5 min, hourly 60, daily and supply
+  once a day).
+
+---
+
+## D-066 — The dashboard finds every asset page, and draws every outcome
+
+**Date:** 2026-09-15 · **Status:** accepted
+
+- **Asset lookup.** The detail page looked its file up in `latest.json`, which
+  lists only the ranked head, and otherwise re-derived a name with a sanitiser
+  that differs from the publisher's. A rejected non-Latin ticker linked to a file
+  that never existed. The page now reads `manifest.json` `asset_files`, which maps
+  every screened ticker; while the index loads it shows "Loading", not an error;
+  if no manifest is published it falls back to the plain ticker name.
+- **Histogram.** Buckets ran from -100% to +1000%. A return vs BTC goes below -100%
+  when the asset collapses while BTC rises, so the worst outcomes were not drawn.
+  The first and last buckets are now open-ended.
+- **Formatting.** Thresholds render as written in `thresholds.yaml` (30,000,000,
+  not 30000000.0000); "Below ATH" shows a positive figure under a label that
+  already says "below"; a missing return vs BTC is muted, not coloured as a loss.
+- **Types.** `market.ath_date` is a string; `Manifest` is typed.

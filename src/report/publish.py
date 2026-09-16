@@ -35,7 +35,7 @@ from src.db.connection import Database, get_db
 from src.db.writes import json_load
 from src.logging_setup import get_logger
 from src.report import daily
-from src.timeutil import add_days, today_utc, utc_now_iso
+from src.timeutil import add_days, utc_now_iso
 
 log = get_logger("report.publish")
 
@@ -261,6 +261,9 @@ def _check_description(check_id: str) -> str:
 # ==============================================================================
 # assets/<TICKER>.json -- the detail page
 # ==============================================================================
+_LAYER3_FLAGS = ("setup_detected", "break_confirmed", "retest_confirmed")
+
+
 def build_asset(
     db: Database, run_date: str, base_asset: str, l1_row: dict[str, Any]
 ) -> dict[str, Any]:
@@ -310,9 +313,12 @@ def build_asset(
             for r in price_rows
         ],
     }
+    # Every EventRow field the dashboard types (D-064). Without event_id the
+    # table's React key fell back to the date, and two events on one day collided.
     events = db.query(
-        "SELECT event_date_utc, event_type, recipient_type, pct_of_circulating, "
-        "magnitude_usd, confidence, description FROM scheduled_event "
+        "SELECT event_id, base_asset, event_date_utc, event_type, recipient_type, "
+        "magnitude_tokens, magnitude_usd, pct_of_circulating, description, source, "
+        "confidence, first_seen_utc FROM scheduled_event "
         "WHERE base_asset = ? AND event_date_utc BETWEEN ? AND ? AND first_seen_utc <= ? "
         "ORDER BY event_date_utc",
         (
@@ -371,7 +377,13 @@ def build_asset(
         ),
         "layer3": (
             {
-                **{k: v for k, v in l3.items() if k != "risk_flags"},
+                # SQLite stores the flags as 0/1; latest.json says true/false.
+                # One file per convention is how a truthy check goes wrong.
+                **{
+                    k: (bool(v) if k in _LAYER3_FLAGS and v is not None else v)
+                    for k, v in l3.items()
+                    if k != "risk_flags"
+                },
                 "risk_flags": json_load(l3["risk_flags"], []) or [],
             }
             if l3
@@ -379,7 +391,7 @@ def build_asset(
         ),
         "market": market,
         "prices": prices,
-        "events": events,
+        "events": [{**e, "is_survivor": bool(l1_row["passed"])} for e in events],
         # Labelled at the boundary, not in the UI: news is context, and a field
         # named "news" next to a field named "score" invites a reader to treat
         # the two as the same kind of thing.
@@ -600,6 +612,10 @@ def _safe_name(asset: str) -> str:
     return f"{cleaned or 'asset'}-{digest}"
 
 
+class NothingToPublish(RuntimeError):
+    """The run date has no screen results. Publishing it would blank the site."""
+
+
 def _prune_asset_dir(asset_dir: Path, current: set[str]) -> None:
     """Delete asset files for tickers no longer in today's universe.
 
@@ -608,7 +624,9 @@ def _prune_asset_dir(asset_dir: Path, current: set[str]) -> None:
     dashboard 404, which is honest; the database keeps the history, while this
     directory is a rendering of one specific day.
     """
-    if not asset_dir.exists():
+    if not asset_dir.exists() or not current:
+        # An empty screen never empties the directory: that is a failed day, not
+        # a universe with nothing in it (D-064).
         return
     keep = {f"{_safe_name(a)}.json" for a in current}
     for path in asset_dir.glob("*.json"):
@@ -624,12 +642,26 @@ def publish_all(run_date: str | None = None) -> list[tuple[str, int]]:
     and the reader would have no way to tell.
     """
     cfg = get_config()
-    date = run_date or today_utc()
     out_dir = cfg.path(cfg.settings.reporting.public_json_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     written: list[tuple[str, int]] = []
 
     with get_db() as db:
+        # The newest screen, not today (D-064). Defaulting to today baked an empty
+        # day whenever the screen had run under another date -- a backfill, a
+        # manual re-publish, a screen that failed -- and pruned every asset page
+        # to match, with a fresh timestamp that kept the stale banner silent.
+        date = run_date or db.scalar("SELECT MAX(run_date) FROM layer1_result")
+        screened_count = (
+            db.scalar("SELECT COUNT(*) FROM layer1_result WHERE run_date = ?", (date,))
+            if date
+            else 0
+        )
+        if not screened_count:
+            raise NothingToPublish(
+                f"no screen results for {date or 'any date'}: refusing to publish an "
+                "empty day over the last good one"
+            )
+        out_dir.mkdir(parents=True, exist_ok=True)
         payload = daily.gather(db, date)
         survivors = {
             r["base_asset"]
@@ -694,6 +726,7 @@ def publish_all(run_date: str | None = None) -> list[tuple[str, int]]:
 
 __all__ = [
     "SCHEMA_VERSION",
+    "NothingToPublish",
     "SecretLeak",
     "build_asset",
     "build_events",

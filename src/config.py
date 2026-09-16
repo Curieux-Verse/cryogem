@@ -57,6 +57,9 @@ class Secrets(BaseSettings):
     healthcheck_hourly: str | None = None
     healthcheck_journal: str | None = None
     healthcheck_screen: str | None = None
+    # Used by the workflows; declared so `doctor` lists them when unset (D-065).
+    healthcheck_supply: str | None = None
+    healthcheck_site: str | None = None
 
     @field_validator("*", mode="before")
     @classmethod

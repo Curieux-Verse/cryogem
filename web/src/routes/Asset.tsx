@@ -2,8 +2,8 @@ import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Flag, MicroBar, Section, TableWrap } from "../components/Bits";
 import { Gate } from "../components/States";
-import { getAsset, getLatest } from "../lib/data";
-import { DASH, metric, num, pct, price, signedPct, usd } from "../lib/format";
+import { MissingData, getAsset, getManifest } from "../lib/data";
+import { DASH, metric, num, pct, price, signedPct, thresholdValue, usd } from "../lib/format";
 import { useData } from "../lib/useData";
 import type { AssetDetail } from "../lib/types";
 
@@ -107,7 +107,7 @@ function CheckGrid({ detail }: { detail: AssetDetail }) {
               {check.value_display || metric(check.value)}
             </p>
             <p className="mt-1 text-xs text-muted">
-              threshold {check.threshold === null ? DASH : num(check.threshold, 4)}
+              threshold {thresholdValue(check.threshold)}
             </p>
             <p className="mt-2 text-xs leading-relaxed text-muted">
               {dark
@@ -128,22 +128,33 @@ function CheckGrid({ detail }: { detail: AssetDetail }) {
 
 export default function Asset() {
   const { ticker = "" } = useParams();
-  // The filename is looked up from latest.json rather than derived: sanitising
-  // a ticker into a filename is not reversible, so the publisher ships the
-  // mapping (DECISIONS D-012).
-  const latest = useData(getLatest);
-  const file = useMemo(() => {
-    if (latest.state !== "ready") return null;
-    const row = latest.data.ranked.find((r) => r.asset === ticker);
-    return row?.file ?? `assets/${ticker.replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
-  }, [latest, ticker]);
+  // The filename comes from manifest.json, which maps EVERY screened ticker.
+  // latest.json lists only the ranked head, and the old fallback re-derived a
+  // name with a different sanitiser from the publisher's, so a rejected
+  // non-Latin ticker linked to a file that never existed (D-066).
+  const manifest = useData(getManifest);
+  const file = useMemo((): string | null | undefined => {
+    if (manifest.state === "loading") return undefined;
+    if (manifest.state === "ready") return manifest.data.asset_files[ticker] ?? null;
+    // No manifest published: the plain-ticker name is the publisher's for any
+    // ticker it did not have to sanitise.
+    return `assets/${ticker}.json`;
+  }, [manifest, ticker]);
 
   const detail = useData<AssetDetail>(
-    () => (file ? getAsset(file) : Promise.reject(new Error("waiting for the index"))),
+    () =>
+      file
+        ? getAsset(file)
+        : file === null
+          ? Promise.reject(new MissingData(`${ticker} is not in the screened universe`))
+          : // Still waiting for the index: stay "loading" rather than settle.
+            new Promise<AssetDetail>(() => {}),
     [file],
   );
 
-  if (latest.state === "loading") {
+  // Until the index resolves there is nothing to load yet -- that is waiting,
+  // not an error, and it must not flash "Could not load" (D-066).
+  if (file === undefined || detail.state === "loading") {
     return <p className="py-12 text-sm text-muted">Loading…</p>;
   }
 
@@ -209,10 +220,11 @@ export default function Asset() {
                   ["FDV", usd(data.market.fdv_usd)],
                   ["Spot volume 24h", usd(data.market.spot_volume_24h_usd)],
                   [
+                    // Stored as a negative fraction; the label already says "below".
                     "Below ATH",
                     data.market.pct_below_ath === null
                       ? DASH
-                      : pct(data.market.pct_below_ath),
+                      : pct(Math.abs(data.market.pct_below_ath)),
                   ],
                   [
                     "24h change",

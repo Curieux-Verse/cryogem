@@ -210,8 +210,12 @@ def publish_command(
     """
     from src.report import publish
 
-    run_date = date or today_utc()
-    written = publish.publish_all(run_date)
+    try:
+        # No --date means the newest screen on file, not today (D-064).
+        written = publish.publish_all(date)
+    except publish.NothingToPublish as exc:
+        typer.secho(f"publish refused: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
     for path, size in written:
         typer.echo(f"  {path} ({size:,} bytes)")
     typer.echo(f"{len(written)} files written")

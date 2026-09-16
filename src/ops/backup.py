@@ -52,7 +52,12 @@ TABLE_ORDER = (
     "table_stats",
     "depth_snapshot",
     "derivatives_snapshot",
+    # The holdout audit log (D-018). Missing, a restore silently reset the count
+    # of times the holdout had been looked at (D-065).
+    "backtest_run",
 )
+
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
 
 
 def _sql_literal(value: Any) -> str:
@@ -70,7 +75,10 @@ def dump(out_path: Path) -> int:
     with get_db() as db, gzip.open(out_path, "wt", encoding="utf-8") as fh:
         fh.write(f"-- gem-screener backup {utc_now_iso()}\n")
         fh.write("-- Restore: gunzip -c backup.sql.gz | sqlite3 restored.db\n")
-        fh.write("PRAGMA foreign_keys=OFF;\nBEGIN;\n")
+        # The schema first. The dump held INSERTs only, so the documented restore
+        # into an empty file failed with "no such table" (D-065).
+        fh.write(SCHEMA_PATH.read_text(encoding="utf-8"))
+        fh.write("\nPRAGMA foreign_keys=OFF;\nBEGIN;\n")
 
         present = set(db.table_names())
         for table in TABLE_ORDER:

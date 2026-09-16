@@ -12,6 +12,7 @@ import type {
   History,
   Journal,
   Latest,
+  Manifest,
   Rejected,
 } from "./types";
 
@@ -48,6 +49,7 @@ async function loadJson<T>(name: string): Promise<T> {
 export class MissingData extends Error {}
 
 export const getLatest = () => loadJson<Latest>("latest.json");
+export const getManifest = () => loadJson<Manifest>("manifest.json");
 export const getRejected = () => loadJson<Rejected>("rejected.json");
 export const getJournal = () => loadJson<Journal>("journal.json");
 export const getEvents = () => loadJson<Events>("events.json");

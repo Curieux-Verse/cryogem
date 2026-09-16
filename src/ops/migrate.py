@@ -161,6 +161,16 @@ def migrate(dry_run: bool = False) -> list[dict[str, Any]]:
         target.close()
 
 
+#: The triggers that make the journal append-only, as schema.sql names them.
+APPEND_ONLY_TRIGGERS = (
+    "journal_entry_no_delete",
+    "journal_entry_no_update",
+    "forward_return_no_delete",
+)
+
+_PROBE = "_verify_append_only_probe"
+
+
 def verify(target: Database | None = None) -> dict[str, Any]:
     """Confirm Turso enforces the append-only triggers.
 
@@ -188,28 +198,47 @@ def verify(target: Database | None = None) -> dict[str, Any]:
                 "detail": "journal_entry is empty, so the trigger could not be exercised",
             }
 
-        raised: str | None = None
-        try:
-            db.execute(
-                "DELETE FROM journal_entry WHERE entry_id = "
-                "(SELECT entry_id FROM journal_entry LIMIT 1)"
-            )
-        except Exception as exc:  # noqa: BLE001 - a rejection is the pass case
-            raised = type(exc).__name__
+        # The probe runs on a scratch table carrying an identical trigger, never
+        # on the journal (D-065). Deleting a real journal row to see whether it
+        # survived was safe only if the answer was yes -- and the question was
+        # being asked because nobody knew.
+        installed = {
+            r["name"]
+            for r in db.query("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        }
+        missing = sorted(set(APPEND_ONLY_TRIGGERS) - installed)
 
-        after = db.scalar("SELECT COUNT(*) FROM journal_entry") or 0
-        enforced = after == before
+        raised: str | None = None
+        db.execute(f"CREATE TABLE IF NOT EXISTS {_PROBE} (id TEXT PRIMARY KEY)")
+        db.execute(
+            f"CREATE TRIGGER IF NOT EXISTS {_PROBE}_no_delete BEFORE DELETE ON {_PROBE} "
+            "BEGIN SELECT RAISE(ABORT, 'append-only probe'); END"
+        )
+        try:
+            db.execute(f"INSERT OR IGNORE INTO {_PROBE} (id) VALUES ('probe')")
+            try:
+                db.execute(f"DELETE FROM {_PROBE} WHERE id = 'probe'")
+            except Exception as exc:  # noqa: BLE001 - a rejection is the pass case
+                raised = type(exc).__name__
+            survived = db.scalar(f"SELECT COUNT(*) FROM {_PROBE}") or 0
+        finally:
+            db.execute(f"DROP TRIGGER IF EXISTS {_PROBE}_no_delete")
+            db.execute(f"DROP TABLE IF EXISTS {_PROBE}")
+
+        enforced = bool(survived) and not missing
         return {
             "counts": counts,
             "append_only_enforced": enforced,
             "detail": (
-                f"removal attempted on journal_entry: {before} rows before, {after} after"
+                f"probe row {'survived' if survived else 'WAS REMOVED'} a delete on a "
+                "scratch table with an identical trigger"
                 + (f"; client raised {raised}" if raised else "; no exception raised")
                 + (
-                    ". The row survived, so the trigger IS enforced."
-                    if enforced
-                    else ". THE ROW WAS REMOVED -- append-only is NOT enforced."
+                    f"; journal triggers MISSING: {', '.join(missing)}"
+                    if missing
+                    else "; every journal trigger is installed"
                 )
+                + (". Append-only IS enforced." if enforced else ". Append-only is NOT enforced.")
             ),
         }
     finally:

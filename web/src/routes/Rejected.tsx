@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Section, TableWrap } from "../components/Bits";
 import { Gate } from "../components/States";
 import { getRejected } from "../lib/data";
-import { checkLabel, metric, num, usd } from "../lib/format";
+import { checkLabel, metric, thresholdValue, usd } from "../lib/format";
 import { useData } from "../lib/useData";
 
 // The disqualification wall.
@@ -96,7 +96,7 @@ export default function Rejected() {
                                 {check.value_display ?? metric(check.value ?? null)}
                               </td>
                               <td className="num py-2 pr-3 text-muted">
-                                {num(check.threshold ?? null, 4)}
+                                {thresholdValue(check.threshold ?? null)}
                               </td>
                               <td className="py-2 text-xs text-muted">{check.reason ?? ""}</td>
                             </tr>

@@ -100,7 +100,16 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = get_config()
-    interval = args.interval_minutes or cfg.thresholds.collectors.derivatives_interval_minutes
+    # Each tier at its own cadence (D-065). Every tier ran at the 5-minute
+    # derivatives interval, so `--tier daily` would re-fetch the day's universe
+    # 288 times a day.
+    tier_minutes = {
+        "fast": cfg.thresholds.collectors.derivatives_interval_minutes,
+        "hourly": 60,
+        "daily": 24 * 60,
+        "supply": 24 * 60,
+    }
+    interval = args.interval_minutes or tier_minutes.get(args.tier, 24 * 60)
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(
         run_tier,
