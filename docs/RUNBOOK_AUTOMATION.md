@@ -79,7 +79,7 @@ Settings → Secrets and variables → Actions → New repository secret.
 | `HEALTHCHECK_SCREEN` | recommended | separate check |
 | `HEALTHCHECK_SUPPLY` | recommended | separate check, for `collect-supply` |
 | `HEALTHCHECK_SITE` | recommended | separate check, pinged after the Pages deploy |
-| `BACKUP_PASSPHRASE` | recommended | without it `backup` keeps a 30-day artifact and publishes no release |
+| `BACKUP_PASSPHRASE` | required for `backup` | without it the backup run fails and publishes nothing -- on a public repo a build artifact is downloadable too |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | no | notification only |
 
 ---

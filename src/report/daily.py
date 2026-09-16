@@ -786,9 +786,11 @@ def staleness_hours(run_date: str, generated_at: str | None = None) -> float:
 
 
 __all__ = [
+    "NothingToReport",
     "data_quality",
     "flags_for",
     "gather",
+    "latest_screen_date",
     "render",
     "staleness_hours",
     "write_report",

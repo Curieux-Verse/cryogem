@@ -1788,3 +1788,38 @@ as they already were in `latest.json`.
 - **CI builds the dashboard.** A `web` job runs `npm ci`, `tsc --noEmit` and the
   same `npm run build` as `build-site`, which used to be found failing only
   after `publish` had committed the day's data.
+
+---
+
+## D-068 — Four findings from reviewing the session's own diff
+
+**Date:** 2026-09-16 · **Status:** accepted
+
+- **A kline close is never overwritten by a CoinGecko price.** `price_daily` is
+  keyed on `(snapshot_date, base_asset)` with no `source`, and two collectors
+  write it. In the daily tier klines runs last, so the row ends up tagged
+  `binance_klines` -- but a later re-run of `coingecko` alone (a retry after a
+  rate limit, an operator re-running one collector) flipped the row back. Every
+  `entry_close` and `horizon_close` lookup filters on `source='binance_klines'`
+  (D-047), so that row became invisible: the day's journal entry stayed pending
+  forever, with no error anywhere, and bars that had been collected quietly left
+  the sample. `writes.PREFERRED_SOURCE` now keeps the authoritative row on
+  conflict. A corrected kline close still lands; only a different source loses.
+- **The Coinalyze bar window reads either unit.** The unit of `t` is undocumented
+  and the previous code assumed milliseconds (D-049), the new code seconds.
+  Either assumption fails identically and silently: a stamp in the other unit is
+  ~1000x the window, so no bar matches, every asset is skipped, and the source
+  looks dead rather than mis-parsed. The stamp is normalised instead of assumed.
+- **No unencrypted dump leaves the backup runner.** With no `BACKUP_PASSPHRASE`
+  the run still uploaded the plaintext dump as a build artifact -- and on a
+  public repo any signed-in account can download a run's artifacts, so the
+  exposure the encryption was added to close stayed open on exactly the path a
+  missing secret takes. The run now deletes the dump, errors and exits 1.
+- **The tier marker is an allow-list, anchored.** `tier` was free text and
+  `screen` matched it with `contains`, so a dispatch of
+  `tier=hourly-but-tier=daily-x` carried the daily marker inside its title and
+  would have let an hourly collect trigger a screen. `tier` is now a `choice`,
+  and the guard uses `endsWith`.
+
+Found by review agents reading the branch diff, not by a failing test; each one
+now has the test that would have caught it.

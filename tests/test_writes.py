@@ -58,6 +58,43 @@ class TestFirstSeen:
         assert row["title"] == "headline, edited"
 
 
+class TestPreferredSource:
+    """D-068. price_daily has no `source` in its key, and the journal reads only
+    kline closes: a coingecko re-run that overwrote the row made the day's bar
+    invisible and left the journal entry pending forever."""
+
+    def _price(self, source: str, close: float) -> dict:
+        return {
+            "snapshot_date": "2026-09-01",
+            "base_asset": "BTC",
+            "close_usd": close,
+            "source": source,
+            "fetched_at_utc": "2026-09-02T03:10:00Z",
+        }
+
+    def _row(self, db) -> dict:
+        return db.query("SELECT close_usd, source FROM price_daily")[0]
+
+    def test_a_coingecko_price_never_overwrites_a_kline_close(self, db):
+        upsert(db, "price_daily", [self._price("binance_klines", 100.0)])
+        upsert(db, "price_daily", [self._price("coingecko", 111.0)])
+        db.commit()
+        assert self._row(db) == {"close_usd": 100.0, "source": "binance_klines"}
+
+    def test_a_kline_close_still_replaces_a_coingecko_price(self, db):
+        upsert(db, "price_daily", [self._price("coingecko", 111.0)])
+        upsert(db, "price_daily", [self._price("binance_klines", 100.0)])
+        db.commit()
+        assert self._row(db) == {"close_usd": 100.0, "source": "binance_klines"}
+
+    def test_a_corrected_kline_close_still_lands(self, db):
+        """The rule is about sources, not about freezing the row."""
+        upsert(db, "price_daily", [self._price("binance_klines", 100.0)])
+        upsert(db, "price_daily", [self._price("binance_klines", 101.0)])
+        db.commit()
+        assert self._row(db) == {"close_usd": 101.0, "source": "binance_klines"}
+
+
 class TestBatching:
     def test_rows_are_sent_in_bounded_batches(self, db, monkeypatch):
         """On Turso one batch is one HTTP request."""

@@ -89,6 +89,17 @@ class TestScreenFollowsADailyCollect:
         not appear in it. That is why the marker is spelled with the equals."""
         assert "tier=daily" not in "collect-daily tier=hourly"
 
+    def test_the_guard_is_anchored_at_the_end_of_the_title(self):
+        """Unanchored, a crafted tier of 'hourly-but-tier=daily-x' carries the
+        marker inside the title and passes a `contains` check (D-068)."""
+        guard = load("screen.yml")["jobs"]["screen"]["if"]
+        assert "endsWith" in guard and "contains" not in guard
+
+    def test_the_tier_input_is_an_allow_list(self):
+        tier = triggers(load("collect-daily.yml"))["workflow_dispatch"]["inputs"]["tier"]
+        assert tier["type"] == "choice"
+        assert set(tier["options"]) == {"daily", "hourly"}
+
 
 class TestTheJournalRunsWithTheScreen:
     def test_the_journal_is_a_job_in_screen(self):
@@ -160,6 +171,22 @@ class TestKeysReachTheJobsThatNeedThem:
 
 
 class TestBackupIsNotPublic:
+    def test_no_step_publishes_an_unencrypted_dump(self):
+        """An artifact is not a private fallback: on a public repo any signed-in
+        account can download a run's artifacts (D-068)."""
+        for step in load("backup.yml")["jobs"]["backup"]["steps"]:
+            if "upload-artifact" not in str(step.get("uses", "")):
+                continue
+            assert step["with"]["path"].endswith(".gpg")
+            assert step["if"] == "steps.encrypt.outputs.encrypted == 'true'"
+
+    def test_a_missing_passphrase_fails_the_run_and_keeps_nothing(self):
+        steps = load("backup.yml")["jobs"]["backup"]["steps"]
+        encrypt = next(s for s in steps if s.get("id") == "encrypt")
+        assert "::error::" in encrypt["run"]
+        assert "exit 1" in encrypt["run"]
+        assert "rm -f backup.sql.gz" in encrypt["run"]
+
     def test_no_release_asset_is_published_unencrypted(self):
         """A release asset on a public repo is public, and the dump is the whole
         database -- journal, holdout audit log and all (D-067)."""

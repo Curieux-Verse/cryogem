@@ -115,6 +115,16 @@ class TestCoinalyzeWindow:
         assert start == int(datetime(2026, 9, 8, tzinfo=timezone.utc).timestamp())
         assert end == int(datetime(2026, 9, 9, tzinfo=timezone.utc).timestamp()) - 1
 
+    def test_a_millisecond_stamp_is_read_as_the_same_instant(self):
+        """D-068: whichever unit the API sends, the bar is found. Assuming one
+        and being wrong matched no bars at all and dropped every asset."""
+        from src.collectors.coinalyze import _bar_in_window
+
+        start, end = previous_day_window(AS_OF)
+        assert _bar_in_window({"t": start}, start, end)
+        assert _bar_in_window({"t": start * 1000}, start, end)
+        assert not _bar_in_window({"t": (end + 1) * 1000}, start, end)
+
     def test_only_the_window_bar_is_counted(self):
         start, _ = previous_day_window(AS_OF)
         raw = {

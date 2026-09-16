@@ -67,10 +67,21 @@ def previous_day_window(as_of: datetime) -> tuple[int, int]:
 
 
 def _bar_in_window(bar: dict[str, Any], start: int, end: int) -> bool:
+    """Is this bar inside [start, end], given in seconds?
+
+    The unit Coinalyze stamps `t` with is not documented and the previous
+    implementation assumed milliseconds (D-049). Either assumption fails the
+    same silent way: a bar stamped in the other unit is ~1000x the window, so
+    NOTHING matches, every asset is skipped, and the source looks dead rather
+    than mis-parsed. So the stamp is normalised instead of assumed -- no
+    second-scale timestamp reaches 1e11, which is the year 5138 (D-068).
+    """
     try:
         stamp = int(bar.get("t"))
     except (TypeError, ValueError):
         return False
+    if stamp >= 100_000_000_000:
+        stamp //= 1000
     return start <= stamp <= end
 
 

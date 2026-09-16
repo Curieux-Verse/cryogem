@@ -6,10 +6,14 @@
 # price, the holdout audit log, every collector reading. Published raw, it also
 # hands anyone the exact ranking history before it is summarised (D-067).
 #
-# So the dump is encrypted with BACKUP_PASSPHRASE (gpg, AES256) before it is
-# published as a release asset -- releases do not expire, and a backup that
-# silently ages out is not a backup. With no passphrase set there is no release:
-# the run keeps a 30-day artifact and says so, loudly.
+# So the dump is encrypted with BACKUP_PASSPHRASE (gpg, AES256) before it leaves
+# the runner, and published as a release asset -- releases do not expire, and a
+# backup that silently ages out is not a backup.
+#
+# With no passphrase the run FAILS and publishes nothing. An artifact is not a
+# private fallback: on a public repo any signed-in account can download a run's
+# artifacts. A red weekly job saying "no passphrase, so no backup" is the honest
+# state; a plaintext dump that looks like a backup is the dangerous one.
 #
 # Restore: gpg -d backup.sql.gz.gpg > backup.sql.gz, then
 #          gunzip -c backup.sql.gz | sqlite3 restored.db  (D-065).
@@ -52,10 +56,12 @@ jobs:
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           if [ -z "$PASSPHRASE" ]; then
-            echo "::warning::BACKUP_PASSPHRASE is unset, so there is no durable backup:"
-            echo "::warning::keeping a 30-day artifact only. A release asset would be public."
             echo "encrypted=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            rm -f backup.sql.gz
+            echo "::error::BACKUP_PASSPHRASE is unset. The dump was deleted unpublished:"
+            echo "::error::on a public repo a release asset AND a build artifact are both"
+            echo "::error::downloadable, and this dump is the whole database. Set the secret."
+            exit 1
           fi
           printf '%s' "$PASSPHRASE" | gpg --batch --yes --symmetric \
             --cipher-algo AES256 --passphrase-fd 0 \
@@ -74,9 +80,11 @@ jobs:
             --notes "Automated weekly dump, encrypted with BACKUP_PASSPHRASE (gpg AES256). Releases do not expire; artifacts do." \
             || gh release upload "$tag" backup.sql.gz.gpg --clobber
 
+      # The encrypted file only, and only once encryption happened: a run's
+      # artifacts on a public repo are downloadable by any signed-in account.
       - uses: actions/upload-artifact@v4
+        if: steps.encrypt.outputs.encrypted == 'true'
         with:
           name: db-backup-${{ github.run_id }}
-          # Whichever of the two exists: encrypted when a passphrase was set.
-          path: backup.sql.gz*
+          path: backup.sql.gz.gpg
           retention-days: 30

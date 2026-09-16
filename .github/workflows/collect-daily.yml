@@ -35,9 +35,16 @@ on:
   workflow_dispatch:
     inputs:
       tier:
-        description: "Which cadence tier to collect: daily | hourly"
+        description: "Which cadence tier to collect"
         required: false
         default: "daily"
+        # An allow-list, not free text. `screen` decides whether to run from
+        # this value as it reaches run-name, and a crafted tier such as
+        # "hourly-but-tier=daily-x" carries the daily marker inside it (D-068).
+        type: choice
+        options:
+          - daily
+          - hourly
       scheduled_for:
         description: "Intended fire slot from cron-job.org: \"HH:MM\" daily, \":MM\" hourly, or a UTC ISO instant"
         required: false

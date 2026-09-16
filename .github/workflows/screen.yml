@@ -40,11 +40,13 @@ jobs:
     # run writes derivatives only: screening it produced a full run, stamped
     # today, built on yesterday's prices, market caps and holder readings.
     # workflow_run carries no inputs, so the tier is read from the run's title,
-    # which collect-daily sets as `collect-daily tier=<tier>`.
+    # which collect-daily sets as `collect-daily tier=<tier>`. Anchored with
+    # endsWith: the tier is the title's trailing token, and an unanchored match
+    # accepts the marker appearing anywhere inside a crafted value (D-068).
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-      contains(github.event.workflow_run.display_title, 'tier=daily'))
+      endsWith(github.event.workflow_run.display_title, 'tier=daily'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

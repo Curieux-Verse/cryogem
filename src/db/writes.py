@@ -67,6 +67,22 @@ KEEP_WHEN_NULL: dict[str, frozenset[str]] = {
     "universe_snapshot": frozenset({"funding_interval_hours"}),
 }
 
+#: (source column, authoritative value) per table: a row already written by the
+#: authoritative source is never overwritten by another one.
+#:
+#: price_daily is keyed on (snapshot_date, base_asset) with no `source`, and two
+#: collectors write it: coingecko's run-time price, and the kline close the
+#: journal and the harness read (D-047). In the daily tier klines runs last, so
+#: the row ends up correct -- but a later re-run of coingecko alone (a retry
+#: after a rate limit, an operator re-running one collector) flipped `source`
+#: back to 'coingecko'. Every entry_close and horizon_close lookup filters on
+#: source='binance_klines', so that row became invisible: the journal entry for
+#: the day stayed pending forever, with no error and nothing in the log, and
+#: bars that HAD been collected silently left the sample (D-068).
+PREFERRED_SOURCE: dict[str, tuple[str, str]] = {
+    "price_daily": ("source", "binance_klines"),
+}
+
 #: Columns written once and never updated: first-seen measurements. A news
 #: item's lag is when WE first saw it; a later run re-seeing the item turned it
 #: into the item's age, and every row shared the latest fetch time (D-053).
@@ -144,10 +160,26 @@ def upsert(db: Database, table: str, rows: Sequence[dict[str, Any]]) -> int:
     else:
         keep = KEEP_WHEN_NULL.get(table, frozenset())
         frozen = FIRST_SEEN.get(table, frozenset())
+        prefer = PREFERRED_SOURCE.get(table)
+
+        def assignment(col: str) -> str:
+            value = (
+                f"COALESCE(excluded.{col}, {table}.{col})" if col in keep else f"excluded.{col}"
+            )
+            if not prefer:
+                return f"{col}={value}"
+            # The winner is a constant from PREFERRED_SOURCE, never row data.
+            # An incoming NULL source loses too: a row that does not say where
+            # it came from cannot displace one that does.
+            src, winner = prefer
+            return (
+                f"{col}=CASE WHEN {table}.{src} = '{winner}' "
+                f"AND (excluded.{src} IS NULL OR excluded.{src} <> '{winner}') "
+                f"THEN {table}.{col} ELSE {value} END"
+            )
+
         updates = ", ".join(
-            f"{c}=COALESCE(excluded.{c}, {table}.{c})" if c in keep else f"{c}=excluded.{c}"
-            for c in cols
-            if c not in keys and c not in frozen
+            assignment(c) for c in cols if c not in keys and c not in frozen
         )
         conflict = ", ".join(keys)
         sql = (
