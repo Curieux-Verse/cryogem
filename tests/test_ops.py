@@ -12,6 +12,7 @@ import pytest
 
 from src.db.writes import upsert
 from src.ops import backup, doctor, migrate
+from src.report import daily
 from src.report import publish
 
 SCHEMA_TABLES = set(
@@ -32,6 +33,16 @@ class TestPublishRefusesAnEmptyDay:
         (tmp_path / "AAA.json").write_text("{}", encoding="utf-8")
         publish._prune_asset_dir(tmp_path, set())
         assert (tmp_path / "AAA.json").exists()
+
+
+class TestReportRefusesAnUnscreenedDay:
+    def test_a_date_with_no_screen_is_refused(self, db):
+        with pytest.raises(daily.NothingToReport, match="no screen results"):
+            daily.write_report("2026-01-01")
+
+    def test_no_screen_on_file_at_all_is_refused(self, db):
+        with pytest.raises(daily.NothingToReport):
+            daily.write_report()
 
 
 class TestBackup:

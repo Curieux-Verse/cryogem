@@ -175,8 +175,15 @@ def report_command(
     """Render the daily markdown report to reports/YYYY-MM-DD.md."""
     from src.report import daily
 
-    run_date = date or today_utc()
-    path = daily.write_report(run_date)
+    try:
+        # No --date means the newest screen on file, not today (D-067). The
+        # report's own filename is then the date to summarise, so the Telegram
+        # message can never describe a different day to the file beside it.
+        path = daily.write_report(date)
+    except daily.NothingToReport as exc:
+        typer.secho(f"report refused: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    run_date = path.stem
     typer.echo(f"wrote {path}")
     if telegram:
         from src.report import telegram as tg

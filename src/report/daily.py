@@ -746,11 +746,23 @@ def latest_screen_date(db: Database) -> str | None:
     return db.scalar("SELECT MAX(run_date) FROM layer1_result")
 
 
+class NothingToReport(RuntimeError):
+    """The date has no screen results, so a report of it would read as a day
+    on which nothing survived (D-067)."""
+
+
 def write_report(run_date: str | None = None) -> Path:
     """Render the report to reports/YYYY-MM-DD.md and return its path."""
     cfg = get_config()
     with get_db() as db:
-        date = run_date or latest_screen_date(db) or today_utc()
+        date = run_date or latest_screen_date(db)
+        if not date or not db.scalar(
+            "SELECT COUNT(*) FROM layer1_result WHERE run_date = ?", (date,)
+        ):
+            raise NothingToReport(
+                f"no screen results for {date or 'any date'}: a report of an unscreened "
+                "day reads as a day on which nothing survived"
+            )
         payload = gather(db, date)
     text = render(payload)
 
