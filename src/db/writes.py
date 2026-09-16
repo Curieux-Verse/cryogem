@@ -204,9 +204,11 @@ def _bump_stats(db: Database, table: str, written: int) -> None:
     "how big is this table" would read every row and burn the free allowance
     (spec 15.1.5). So counts are maintained incrementally on write instead.
 
-    The count is approximate by construction: an upsert that overwrites an
-    existing row still increments. It is a growth indicator for the Health page,
-    not an exact census, and it is labelled that way in the UI.
+    This counts WRITES, not rows: an upsert that overwrites an existing row
+    increments it again, so the figure only grows and will exceed the true row
+    count -- measured 2026-09-16, price_daily read 713,934 against 357,121
+    actual rows. It is a growth and liveness indicator, and the Health page
+    headers the column "Writes" so the page cannot be read as a census (D-069).
     """
     if written <= 0:
         return

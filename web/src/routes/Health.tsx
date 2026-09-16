@@ -1,6 +1,12 @@
 import { Flag, Section, TableWrap } from "../components/Bits";
 import { Gate } from "../components/States";
-import { STALE_AFTER_HOURS, ageHours, getHealth } from "../lib/data";
+import {
+  STALE_AFTER_HOURS,
+  SURVIVAL_BAND,
+  ageHours,
+  getHealth,
+  getHistory,
+} from "../lib/data";
 import { DASH, compactInt, num, pct } from "../lib/format";
 import { useData } from "../lib/useData";
 
@@ -22,6 +28,10 @@ function Age({ iso }: { iso: string | null }) {
 
 export default function Health() {
   const health = useData(getHealth);
+  // Published on every run since the first release and rendered nowhere
+  // until D-069. Loaded separately so a missing history.json costs this
+  // section only, never the collector table above it.
+  const history = useData(getHistory);
 
   return (
     <Gate
@@ -222,11 +232,11 @@ export default function Health() {
           <Section title="Tables">
             <TableWrap>
               <table className="w-full min-w-[28rem] border-collapse text-sm">
-                <caption className="sr-only">Row counts and last write per table</caption>
+                <caption className="sr-only">Writes and last write per table</caption>
                 <thead>
                   <tr className="border-b border-line text-left">
                     <th scope="col" className="py-2 pr-3">Table</th>
-                    <th scope="col" className="py-2 pr-3 text-right">Rows</th>
+                    <th scope="col" className="py-2 pr-3 text-right">Writes</th>
                     <th scope="col" className="py-2">Last write</th>
                   </tr>
                 </thead>
@@ -244,11 +254,60 @@ export default function Health() {
               </table>
             </TableWrap>
             <p className="mt-3 text-xs text-muted">
-              Row counts are maintained incrementally and are approximate by design. Turso
-              meters row READS, so a `SELECT COUNT(*)` over a time-series table to answer a
-              status question would consume the free allowance to report on itself.
+              This counts WRITES, not rows, and only ever grows: an upsert that
+              overwrites a row it wrote yesterday increments it again, so a re-run
+              inflates the figure without adding a row. Read it as growth and
+              liveness. Turso meters row READS, so a `SELECT COUNT(*)` over a
+              time-series table to answer a status question would consume the free
+              allowance to report on itself (D-069).
             </p>
           </Section>
+
+          {history.state === "ready" && history.data.days.length ? (
+            <Section
+              title="Funnel history"
+              note="The survival rate over time, which is the number the Screen page makes a claim about. One day inside the band says nothing; a drift toward an edge is what calls for a recorded threshold decision instead of a quiet change to a number that disqualified something interesting."
+            >
+              <TableWrap>
+                <table className="w-full min-w-[28rem] border-collapse text-sm">
+                  <caption className="sr-only">
+                    Universe, survivors and survival rate per run date
+                  </caption>
+                  <thead>
+                    <tr className="border-b border-line text-left">
+                      <th scope="col" className="py-2 pr-3">Run date</th>
+                      <th scope="col" className="py-2 pr-3 text-right">Universe</th>
+                      <th scope="col" className="py-2 pr-3 text-right">Survivors</th>
+                      <th scope="col" className="py-2 text-right">Survival rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...history.data.days].reverse().map((day) => {
+                      const rate = day.survival_rate;
+                      const outside =
+                        rate !== null && (rate < SURVIVAL_BAND.min || rate > SURVIVAL_BAND.max);
+                      return (
+                        <tr key={day.run_date} className="border-b border-line/40">
+                          <td className="py-2 pr-3 font-mono text-xs">{day.run_date}</td>
+                          <td className="num py-2 pr-3">{compactInt(day.universe)}</td>
+                          <td className="num py-2 pr-3">{compactInt(day.survivors)}</td>
+                          <td className={`num py-2 ${outside ? "text-fail" : "text-muted"}`}>
+                            {rate === null ? DASH : pct(rate)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableWrap>
+              <p className="mt-3 text-xs text-muted">
+                {history.data.days.length} run
+                {history.data.days.length === 1 ? "" : "s"} recorded over a{" "}
+                {history.data.window_days}-day window. A rate in red fell outside the{" "}
+                {pct(SURVIVAL_BAND.min, 0)}–{pct(SURVIVAL_BAND.max, 0)} design band.
+              </p>
+            </Section>
+          ) : null}
 
           {data.recent_failures.length ? (
             <Section title="Recent failures">

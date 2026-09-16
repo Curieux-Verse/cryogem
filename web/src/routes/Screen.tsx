@@ -79,6 +79,8 @@ export default function Screen() {
               <label className="text-xs text-muted">
                 <span className="block">Sector</span>
                 <select
+                  id="sector"
+                  name="sector"
                   value={sector}
                   onChange={(event) => setSector(event.target.value)}
                   className="mt-1 border border-line bg-surface px-2 py-1 text-sm text-ink"
@@ -93,6 +95,8 @@ export default function Screen() {
               <label className="text-xs text-muted">
                 <span className="block">Sort</span>
                 <select
+                  id="sort"
+                  name="sort"
                   value={sort}
                   onChange={(event) => setSort(event.target.value as SortKey)}
                   className="mt-1 border border-line bg-surface px-2 py-1 text-sm text-ink"

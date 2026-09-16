@@ -454,8 +454,11 @@ CREATE TABLE IF NOT EXISTS collector_run (
 );
 CREATE INDEX IF NOT EXISTS idx_run_name_started ON collector_run(collector_name, started_at_utc);
 
--- Maintained counts. Turso meters ROW READS: never SELECT COUNT(*) over a
--- time-series table to answer "how many rows do we have?". Read this instead.
+-- Maintained WRITE counts -- NOT a row census (D-069). row_count is incremented
+-- by every upsert, including one that overwrites a row already counted, so it
+-- only grows and will exceed the true row count. Turso meters ROW READS, which
+-- is why no exact count is kept beside it: read this as growth and liveness,
+-- and count rows in a restored dump when a census is genuinely needed.
 CREATE TABLE IF NOT EXISTS table_stats (
     table_name      TEXT PRIMARY KEY,
     row_count       INTEGER NOT NULL DEFAULT 0,

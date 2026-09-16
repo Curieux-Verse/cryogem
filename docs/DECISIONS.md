@@ -1823,3 +1823,45 @@ as they already were in `latest.json`.
 
 Found by review agents reading the branch diff, not by a failing test; each one
 now has the test that would have caught it.
+
+
+## D-069 — A write tally was labelled "Rows"
+
+**Date:** 2026-09-16 · **Status:** accepted
+
+`table_stats.row_count` exists so the Health page never has to run a metered
+`SELECT COUNT(*)` over a time-series table (spec 15.1.5). It is maintained on
+write: `row_count = row_count + excluded.row_count`. An upsert that overwrites a
+row already counted increments it again, so the figure only ever grows and
+drifts further from the truth on every re-run. Measured 2026-09-16 against a
+verified dump: **713,934 for `price_daily` against 357,121 actual rows.**
+
+The column was headed **Rows**, with a screen-reader caption of "Row counts and
+last write per table", and `_bump_stats` claimed it was "labelled that way in
+the UI" -- which it was not. A number that looks like a measurement but is a
+write tally is the same class of defect as the rest of this session: nothing
+errors, and the page reads as a census.
+
+The counter is unchanged -- it is the right cheap signal, and an exact count is
+what Turso's metering forbids. Only the name changes: the column is **Writes**,
+the caption and the surrounding note say what it counts, and the schema comment
+no longer answers "how many rows do we have?" with it. An exact census belongs
+in a restored dump, where reads are free.
+
+Two other fixes found by loading the deployed site and reading it:
+
+- **`history.json` had no reader.** Published on every run with a 90-day funnel
+  series, typed in `types.ts`, loaded by an exported `getHistory` -- and called
+  from nowhere. No route, no link. The Screen page asserts a 20-50% design band
+  while the series that would show drift toward its edge shipped publicly and
+  rendered nowhere. It is now a "Funnel history" section on the Health page,
+  which colours any run that fell outside the band. The band itself moves to one
+  definition, `SURVIVAL_BAND` in `lib/data.ts`, because a threshold duplicated
+  in prose on one page and in a comparison on another is a threshold that drifts
+  quietly.
+- **The two Screen selects had no `id`/`name`.** Their accessible name comes
+  from the wrapping `<label>`, so screen readers were fine, but Chrome flags the
+  pair on every load. Added.
+
+Found by verifying the first successful deploy in the browser rather than by a
+failing test. The write-tally semantics now have one.

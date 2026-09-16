@@ -216,6 +216,8 @@ def data_quality(db: Database, run_date: str) -> dict[str, Any]:
             }
             for name, counts in sorted(tally.items())
         },
+        # row_count is a cumulative WRITE tally, not a row census (D-069).
+        # The Health page headers it "Writes" for that reason.
         "tables": db.query(
             "SELECT table_name, row_count, last_write_utc FROM table_stats ORDER BY table_name"
         ),

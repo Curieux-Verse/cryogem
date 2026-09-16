@@ -119,3 +119,52 @@ class TestBatching:
         assert upsert(db, "price_daily", rows) == BATCH_ROWS * 2 + 1
         assert sizes == [BATCH_ROWS, BATCH_ROWS, 1]
         assert db.scalar("SELECT COUNT(*) FROM price_daily") == BATCH_ROWS * 2 + 1
+
+
+class TestTableStatsCountsWrites:
+    """D-069: row_count is a cumulative WRITE tally, not a live row count.
+
+    The Health page shows this figure. It was headed "Rows", which it is not:
+    on 2026-09-16 it read 713,934 for price_daily against 357,121 actual rows,
+    because every re-run of a collector increments it again over rows it has
+    already counted. The number is useful -- it is the cheap liveness signal
+    that avoids a metered COUNT(*) -- but only under the right name.
+
+    This test pins the semantics. If someone makes the counter exact it fails,
+    which is the prompt to relabel the column back.
+    """
+
+    def _row(self) -> dict:
+        return {
+            "snapshot_date": "2026-09-01",
+            "base_asset": "BTC",
+            "close_usd": 100.0,
+            "source": "binance_klines",
+            "fetched_at_utc": "2026-09-02T03:10:00Z",
+        }
+
+    def _counted(self, db) -> int:
+        return db.scalar(
+            "SELECT row_count FROM table_stats WHERE table_name = 'price_daily'"
+        )
+
+    def test_rewriting_one_row_counts_two_writes_over_one_row(self, db):
+        upsert(db, "price_daily", [self._row()])
+        upsert(db, "price_daily", [self._row()])
+        db.commit()
+
+        assert db.scalar("SELECT COUNT(*) FROM price_daily") == 1
+        assert self._counted(db) == 2
+
+    def test_the_counter_never_decreases(self, db):
+        upsert(db, "price_daily", [self._row()])
+        db.commit()
+        first = self._counted(db)
+
+        db.execute("DELETE FROM price_daily")
+        upsert(db, "price_daily", [self._row()])
+        db.commit()
+
+        # The table is back to one row; the tally has seen two writes.
+        assert db.scalar("SELECT COUNT(*) FROM price_daily") == 1
+        assert self._counted(db) > first

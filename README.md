@@ -125,7 +125,7 @@ These are enforced in code or CI, not by convention:
 
 ## Status
 
-Phases 0–11 implemented; 485 Python tests passing. The parts that need calendar
+Phases 0–11 implemented; 487 Python tests passing. The parts that need calendar
 time rather than code are, by design, not done: the 14-day autonomy proof, six
 months of journal data, and the first honest backtest. The backtest harness is
 built and deliberately refuses to run until the data supports it.

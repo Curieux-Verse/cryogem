@@ -202,6 +202,8 @@ export interface Health {
     status: string;
     error_message: string | null;
   }[];
+  /** `row_count` is a cumulative WRITE tally, not a row census (D-069): an
+   *  upsert that overwrites a row increments it again. Rendered as "Writes". */
   tables: { table_name: string; row_count: number; last_write_utc: string | null }[];
   coverage: Record<
     string,

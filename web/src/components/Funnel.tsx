@@ -1,3 +1,4 @@
+import { SURVIVAL_BAND } from "../lib/data";
 import { compactInt, pct } from "../lib/format";
 import type { Funnel as FunnelData } from "../lib/types";
 
@@ -38,7 +39,8 @@ export default function Funnel({ data }: { data: FunnelData }) {
       </ol>
       <p className="mt-6 max-w-3xl text-sm text-muted">
         Survival rate <span className="font-mono text-ink">{pct(data.survival_rate)}</span>.
-        The design target is 20–50%: a rate outside that band means the thresholds need
+        The design target is {pct(SURVIVAL_BAND.min, 0)}–{pct(SURVIVAL_BAND.max, 0)}: a rate outside
+        that band means the thresholds need
         review, and the response is a recorded decision, never a quiet loosening of a
         number that disqualified something interesting.
       </p>

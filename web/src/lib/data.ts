@@ -67,3 +67,11 @@ export function ageHours(iso: string): number {
 
 /** Spec 16.4.6: never display a stale screen as current. */
 export const STALE_AFTER_HOURS = 26;
+
+/** Spec 16.3: the band the survival rate is designed to land in.
+ *
+ *  Defined once because two pages now depend on it: the Screen page states
+ *  the band in prose and the Health page colours a run that fell outside it.
+ *  Two copies of a threshold drift, and a threshold that drifts quietly is
+ *  the one thing this project refuses to allow. */
+export const SURVIVAL_BAND = { min: 0.2, max: 0.5 };
