@@ -1865,3 +1865,71 @@ Two other fixes found by loading the deployed site and reading it:
 
 Found by verifying the first successful deploy in the browser rather than by a
 failing test. The write-tally semantics now have one.
+
+
+## D-070 — The Binance hosts are the website host, because the API hosts are 451 from CI
+
+**Date:** 2026-09-16 · **Status:** accepted
+
+The first live `collect-daily` failed, and it failed for a reason no test could
+have caught: `fapi.binance.com` and `api.binance.com` return **HTTP 451
+Unavailable For Legal Reasons** to GitHub's runners, which egress from Azure US.
+The same endpoints return 200 from a laptop in a permitted region, so every
+local run and every test passed while the only environment that matters was
+locked out. Four collectors died at once -- `binance_universe`, `binance_spot`,
+`binance_klines`, `binance_derivatives` -- which is every input the screen needs.
+
+The run history makes the scale of it plain: **every** Binance success ever
+recorded is dated 2026-09-09/10, from local runs. Binance had never once
+succeeded on a runner. The 2026-09-11 cancellation hid it, and the baseline read
+it as "the chain has never completed end to end".
+
+Binance's own USD-M docs list only `fapi.binance.com`, and the developer forum
+thread on this exact error concludes that the spot workarounds
+(`data-api.binance.vision`, `api.binance.us`) do not work for futures and that
+the only fix is egressing from a permitted region. Both are wrong about the
+alternative. Measured on runner 52.165.101.57, all inside one second:
+
+| URL | from the runner |
+|---|---|
+| `fapi.binance.com/fapi/v1/exchangeInfo` | **451** |
+| `api.binance.com/api/v3/ticker/24hr` | **451** |
+| `www.binance.com/fapi/v1/exchangeInfo` | **200** (1.1 MB) |
+| `www.binance.com/fapi/v1/premiumIndex` | **200** |
+| `www.binance.com/fapi/v1/openInterest` | **200** |
+| `www.binance.com/fapi/v1/klines` | **200** |
+| `www.binance.com/api/v3/ticker/24hr` | **200** |
+
+The block is per **host**, not per path: the website host proxies the same REST
+surface. And this project already depended on that fact without noticing --
+`binance_announcements` has always pointed at `www.binance.com/bapi/...`, and on
+the day the four collectors returned 451 it was the one Binance call that
+returned 200 OK. The evidence was in the failing run's own log.
+
+So `binance_futures` and `binance_spot` both become `https://www.binance.com`.
+Every affected collector already reads
+`self.config.settings.endpoints["binance_futures"]`, so this is two lines of
+configuration and no code. It also unifies the two environments: the website
+host answers 200 locally too, so CI and a laptop now take the same path instead
+of one working by accident of geography.
+
+**Rejected alternatives.** A proxy *on* Actions is useless -- it egresses from
+the same blocked IP. An external proxy in a permitted region would work
+(`httpx.AsyncClient` is built without `trust_env=False`, so `HTTPS_PROXY` alone
+would do it, with no code change) but costs money and adds a secret and a
+failure mode, for a problem a config line solves. A self-hosted runner is a real
+security exposure on a public repository. The public data archive
+(`data.binance.vision/data/futures/um/daily/...`, confirmed 200 from the runner)
+carries klines and open-interest `metrics` and stays the fallback if the website
+host is ever closed -- but it is T+1 and has no `exchangeInfo`, so the universe
+would lose `onboardDate` and status, taking `L1_AGE` and `L1_PERP_SPOT` with it.
+
+**Watch for.** The rate limits stay as they are (`binance_futures: 1200/min`),
+but the klines collector issues one request per symbol -- 528 today -- through a
+host whose published limits do not cover this use. If the website host
+rate-limits or challenges that, D-046's error ceiling fails the run loudly
+rather than recording a success over a partial fetch, which is exactly the
+behaviour that made this failure legible in the first place.
+
+Three tests: no endpoint may name a geo-blocked host, both Binance hosts must be
+the website host, and no module may hardcode a blocked host behind the config.

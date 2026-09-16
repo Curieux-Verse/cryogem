@@ -30,8 +30,15 @@ http:
   openinterest_concurrency: 10
 
 endpoints:
-  binance_futures: "https://fapi.binance.com"
-  binance_spot: "https://api.binance.com"
+  # BOTH Binance hosts are the WEBSITE host, not the API hosts (D-070).
+  # fapi.binance.com and api.binance.com answer 451 from GitHub's runners,
+  # which egress from Azure US. www.binance.com serves the same REST paths
+  # and answers 200 from the same IP in the same second -- which is how
+  # binance_announcements below has always worked. Reverting either of these
+  # to an api host breaks every Binance collector in CI and nowhere else,
+  # so it looks like a passing change on a laptop. A test pins them.
+  binance_futures: "https://www.binance.com"
+  binance_spot: "https://www.binance.com"
   hyperliquid: "https://api.hyperliquid.xyz/info"
   coingecko: "https://api.coingecko.com/api/v3"
   coingecko_pro: "https://pro-api.coingecko.com/api/v3"

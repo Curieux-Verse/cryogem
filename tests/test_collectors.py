@@ -8,6 +8,7 @@ calls Binance fails when Binance is slow, and it is not testing our code anyway.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -467,3 +468,56 @@ class TestDefiLlamaMapping:
         # redistribute its weight, not score it a genuine-looking zero.
         assert row["revenue_30d_usd"] is None
         assert row["tvl_usd"] is None
+
+
+class TestBinanceHostsAvoidTheGeoBlock:
+    """D-070: the configured Binance hosts must be reachable from CI.
+
+    Measured on GitHub runner 52.165.101.57 (Azure centralus), run 35132477660,
+    all within one second:
+
+        451  https://fapi.binance.com/fapi/v1/exchangeInfo
+        451  https://api.binance.com/api/v3/ticker/24hr
+        200  https://www.binance.com/fapi/v1/exchangeInfo
+        200  https://www.binance.com/api/v3/ticker/24hr
+
+    The block is per-HOST, not per-path: the website host serves the same REST
+    surface. This is not a workaround bolted on -- binance_announcements has
+    always pointed at www.binance.com, and it was the one Binance call that
+    succeeded on the runner the day the others returned 451.
+
+    The trap this guards: reverting a host to `fapi.binance.com` works perfectly
+    on any developer machine outside a restricted region, passes review, and
+    fails only in CI -- where it takes out the universe, spot, klines and
+    derivatives collectors at once, which is every input the screen needs.
+    """
+
+    #: Hosts that answer 451 from GitHub's runners. Never in `endpoints`.
+    GEO_BLOCKED = ("fapi.binance.com", "api.binance.com")
+
+    def _endpoints(self) -> dict[str, str]:
+        import yaml
+
+        path = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
+        return yaml.safe_load(path.read_text(encoding="utf-8"))["endpoints"]
+
+    def test_no_endpoint_uses_a_host_ci_cannot_reach(self):
+        for name, url in self._endpoints().items():
+            for blocked in self.GEO_BLOCKED:
+                assert blocked not in url, f"{name} -> {url} is 451 from a runner"
+
+    def test_both_binance_hosts_are_the_website_host(self):
+        endpoints = self._endpoints()
+        assert endpoints["binance_futures"] == "https://www.binance.com"
+        assert endpoints["binance_spot"] == "https://www.binance.com"
+
+    def test_no_module_hardcodes_a_blocked_host(self):
+        """The config fix is worthless if a collector hardcodes its base URL."""
+        src = Path(__file__).resolve().parent.parent / "src"
+        hardcoded = [
+            f"{path.relative_to(src)}:{blocked}"
+            for path in sorted(src.rglob("*.py"))
+            for blocked in self.GEO_BLOCKED
+            if f"https://{blocked}" in path.read_text(encoding="utf-8")
+        ]
+        assert not hardcoded, f"hardcoded geo-blocked host: {hardcoded}"
