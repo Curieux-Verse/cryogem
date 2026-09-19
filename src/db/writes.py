@@ -77,6 +77,11 @@ APPEND_ONLY = frozenset(
 #: went away. Without this, the re-run blanked what the first run got (D-053).
 KEEP_WHEN_NULL: dict[str, frozenset[str]] = {
     "universe_snapshot": frozenset({"funding_interval_hours"}),
+    # D-077. A closed bar's taker volume never legitimately goes away, so a
+    # kline re-fetch that lacks it must not blank it. (A CoinGecko row cannot
+    # touch it at all: it never carries the column, and PREFERRED_SOURCE keeps
+    # a kline row's values whole against it.)
+    "price_daily": frozenset({"taker_buy_usd"}),
 }
 
 #: (source column, authoritative value) per table: a row already written by the

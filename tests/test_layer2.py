@@ -83,7 +83,12 @@ class TestPercentileRanking:
 
 
 class TestWeightRenormalisation:
+    """Renamed in spirit by D-075: weights normalise over LIVE blocks, not over
+    whatever an individual asset happens to have."""
+
     def test_asset_missing_the_fundamental_block_still_totals_within_range(self):
+        """Unchanged by D-075: a block dark for everyone drops out for everyone,
+        so the assets are still scored, within 0-100."""
         df = frame(["A", "B", "C"], has_fundamentals=0)
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert scored["fundamental"].isna().all(), "no revenue model => block is None"
@@ -92,10 +97,14 @@ class TestWeightRenormalisation:
         assert (scored["total_score"] >= 0.0).all()
 
     def test_missing_block_is_none_not_zero(self):
-        """A None redistributes weight; a zero would bury every non-revenue asset.
+        """The block stays None in the row -- never a measured zero.
 
-        Two otherwise-identical assets, one with fundamentals data and one
-        without, must not be separated by a fabricated zero.
+        Changed by D-075. This test used to assert that renormalisation kept
+        HASNT comparable to HAS. Its assertion (HASNT > 0) still holds, but for
+        a different reason: in a two-asset universe the live floor is both
+        assets, so a fundamental block measured for one of them is dark and
+        drops out for both. The None-not-zero half of the contract survives
+        unchanged; see TestMissingDataScoresNothing for the live case.
         """
         df = frame(["HAS", "HASNT"])
         df.loc["HAS", "has_fundamentals"] = 1
@@ -104,18 +113,19 @@ class TestWeightRenormalisation:
         df.loc["HAS", "revenue_annualised"] = 12e6
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert pd.isna(scored.loc["HASNT", "fundamental"])
-        # If a missing block scored 0, HASNT would be dragged far below HAS.
-        # Renormalisation keeps them comparable on the blocks they share.
         assert scored.loc["HASNT", "total_score"] > 0.0
 
     def test_blocks_available_counts_exactly_the_measured_blocks(self):
         """The old assertion (>= 1 and <= 6) could not fail. The fixture measures
         supply (float), events (a schedule with no cliff) and drawdown (ATH);
-        fundamental, sector (unclassified) and attention are unmeasured."""
+        fundamental, momentum (no bars), sector (unclassified) and attention
+        are unmeasured. D-077 added momentum, so there are seven blocks."""
         df = frame(["A", "B", "C"])
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert (scored["blocks_available"] == 3).all()
-        assert len(BLOCKS) == 6
+        assert len(BLOCKS) == 7
+        assert scored.attrs["live_blocks"] == ["supply", "events", "drawdown"]
+        assert (scored["coverage"] == 1.0).all(), "measured on every live block"
 
     def test_rank_is_dense_and_starts_at_one(self):
         df = frame(["A", "B", "C", "D"])
@@ -255,8 +265,9 @@ class TestMissingUnlockDataIsNotGoodNews:
     def test_an_asset_with_no_event_data_has_no_events_score(self):
         """D-059. The catalyst and monitoring flags were filled with False and
         counted as measured, so an asset we knew nothing about scored 50 on
-        events. With nothing known the block is None, and its weight moves to
-        the blocks that were measured."""
+        events. With nothing known the block is None. D-075: in this one-asset
+        universe the block is then dark and drops out; in a live universe the
+        None would earn 0 (TestMissingDataScoresNothing)."""
         df = frame(["UNKNOWN"])
         df.loc["UNKNOWN", "has_unlock_record"] = False
         scored = Layer2Scorer(RUN_DATE).score(df)

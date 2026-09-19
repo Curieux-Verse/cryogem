@@ -297,7 +297,7 @@ def replay(
 
         ranked = db.query(
             "SELECT base_asset, rank, total_score, score_fundamental, score_supply, "
-            "score_sector, score_events, score_attention, score_drawdown "
+            "score_momentum, score_sector, score_events, score_attention, score_drawdown "
             "FROM layer2_result WHERE run_date = ? ORDER BY rank LIMIT ?",
             (run_date, limit),
         )
@@ -363,6 +363,7 @@ def replay(
                         for key in (
                             "score_fundamental",
                             "score_supply",
+                            "score_momentum",
                             "score_sector",
                             "score_events",
                             "score_attention",
