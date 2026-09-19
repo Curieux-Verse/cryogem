@@ -2,7 +2,15 @@ import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Flag, MicroBar, Section, TableWrap } from "../components/Bits";
 import { Gate } from "../components/States";
-import { MissingData, getAsset, getManifest } from "../lib/data";
+import { MissingData, getAsset, getLatest, getManifest } from "../lib/data";
+import {
+  BLOCKS,
+  MISSING_REDISTRIBUTED,
+  MISSING_SCORES_NOTHING,
+  blockStatus,
+  coverageSummary,
+  coverageText,
+} from "../lib/blocks";
 import { DASH, metric, num, pct, price, signedPct, thresholdValue, usd } from "../lib/format";
 import { useData } from "../lib/useData";
 import type { AssetDetail } from "../lib/types";
@@ -17,14 +25,56 @@ import type { AssetDetail } from "../lib/types";
 // Written for every asset SCREENED, not only survivors. A disqualified asset
 // needs its detail page most, because the rejection wall links here.
 
-const BLOCK_LABELS = {
-  fundamental: "Fundamental",
-  supply: "Supply",
-  sector: "Sector",
-  events: "Events",
-  attention: "Attention",
-  drawdown: "Drawdown",
-} as const;
+/** Layer 2 blocks with coverage and dark-block marking. `live_blocks` lives in
+ *  latest.json only, so it is borrowed from there when both files describe the
+ *  same run date; otherwise the page does not guess which blocks were dark. */
+function Layer2Blocks({
+  layer2,
+  runDate,
+}: {
+  layer2: NonNullable<AssetDetail["layer2"]>;
+  runDate: string;
+}) {
+  const latest = useData(getLatest);
+  const liveBlocks: readonly string[] | null =
+    latest.state === "ready" &&
+    latest.data.run_date === runDate &&
+    Array.isArray(latest.data.live_blocks)
+      ? latest.data.live_blocks
+      : null;
+  const v2 = Boolean(layer2.score_version) || typeof layer2.coverage === "number";
+  const summary = coverageSummary(layer2.blocks, liveBlocks, layer2.coverage);
+
+  return (
+    <>
+      <p className="mb-4 font-mono text-xs text-muted">
+        Coverage: {coverageText(summary)}
+        {layer2.score_version ? ` · score ${layer2.score_version}` : ""}
+      </p>
+      <ul className="max-w-xl space-y-3">
+        {BLOCKS.map(({ key, label }) => {
+          const status = blockStatus(key, layer2.blocks, liveBlocks);
+          return (
+            <li key={key} className="flex items-center justify-between gap-4">
+              <span className={`text-sm ${status === "dark" ? "text-muted" : ""}`}>
+                {label}
+                {status === "dark" ? (
+                  <span className="ml-2 text-xs text-muted">(no source this run)</span>
+                ) : null}
+              </span>
+              <MicroBar
+                value={layer2.blocks[key]}
+                label={label}
+                status={status === "dark" || status === "absent" ? status : undefined}
+                missing={v2 ? "zero" : "redistributed"}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
 
 function Sparkline({ rows }: { rows: (string | number | null)[][] }) {
   const points = useMemo(() => {
@@ -249,19 +299,13 @@ export default function Asset() {
           {data.layer2 ? (
             <Section
               title="Layer 2 — block percentiles"
-              note={`Rank ${data.layer2.rank ?? DASH} of ${data.layer2.universe_size} survivors, total score ${num(data.layer2.total_score)}. A blank block had no data and its weight was redistributed, not zeroed.`}
+              note={`Rank ${data.layer2.rank ?? DASH} of ${data.layer2.universe_size} survivors, total score ${num(data.layer2.total_score)}. ${
+                data.layer2.score_version || typeof data.layer2.coverage === "number"
+                  ? MISSING_SCORES_NOTHING
+                  : MISSING_REDISTRIBUTED
+              }`}
             >
-              <ul className="max-w-xl space-y-3">
-                {Object.entries(BLOCK_LABELS).map(([key, label]) => (
-                  <li key={key} className="flex items-center justify-between gap-4">
-                    <span className="text-sm">{label}</span>
-                    <MicroBar
-                      value={data.layer2!.blocks[key as keyof typeof BLOCK_LABELS]}
-                      label={label}
-                    />
-                  </li>
-                ))}
-              </ul>
+              <Layer2Blocks layer2={data.layer2} runDate={data.run_date} />
             </Section>
           ) : null}
 

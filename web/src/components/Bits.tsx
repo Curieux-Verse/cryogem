@@ -5,12 +5,50 @@ import { DASH, num } from "../lib/format";
  *  A missing block renders as a dash with a tooltip, NOT as an empty bar. An
  *  empty bar and a zero bar look identical, and the difference between "no
  *  data" and "scored badly" is the whole reason L2 renormalises weights. */
-export function MicroBar({ value, label }: { value: number | null; label: string }) {
-  if (value === null || Number.isNaN(value)) {
+export function MicroBar({
+  value,
+  label,
+  status,
+  missing = "redistributed",
+}: {
+  value: number | null | undefined;
+  label: string;
+  /** "dark": no source for any asset this run. "absent": the block did not
+   *  exist in the score version that wrote the file. Neither is a zero. */
+  status?: "dark" | "absent";
+  /** How a missing value was scored: the pre-gem-v2 method redistributed its
+   *  weight; D-075 (gem-v2) counts it as 0. */
+  missing?: "redistributed" | "zero";
+}) {
+  if (status === "dark") {
+    return (
+      <span
+        className="font-mono text-[10px] uppercase text-muted/70"
+        title={`${label}: dark (no source). Nothing was measured for any asset this run, so the block dropped out for everyone rather than scoring zero.`}
+      >
+        dark
+      </span>
+    );
+  }
+  if (status === "absent") {
+    return (
+      <span
+        className="font-mono text-xs text-muted/60"
+        title={`${label}: not part of the score version that produced this run.`}
+      >
+        n/a
+      </span>
+    );
+  }
+  if (value === null || value === undefined || Number.isNaN(value)) {
     return (
       <span
         className="font-mono text-xs text-muted"
-        title={`${label}: no data. Its weight was redistributed across the blocks that had data, not counted as zero.`}
+        title={
+          missing === "zero"
+            ? `${label}: no data for this asset. Missing data scores nothing: it counts as 0 of this block's weight, and lowers coverage.`
+            : `${label}: no data. Its weight was redistributed across the blocks that had data, not counted as zero.`
+        }
       >
         {DASH}
       </span>

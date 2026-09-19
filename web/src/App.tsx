@@ -6,6 +6,7 @@ import Rejected from "./routes/Rejected";
 import Journal from "./routes/Journal";
 import Events from "./routes/Events";
 import Health from "./routes/Health";
+import Pulse from "./routes/Pulse";
 
 // HashRouter, NOT BrowserRouter (spec 16.4.2). GitHub Pages has no server-side
 // rewrite, so a deep link like /asset/AERO would 404 on a hard refresh under
@@ -30,6 +31,7 @@ export default function App() {
       <Routes>
         <Route element={<Chrome />}>
           <Route index element={<Screen />} />
+          <Route path="pulse" element={<Pulse />} />
           <Route path="asset/:ticker" element={<Asset />} />
           <Route path="rejected" element={<Rejected />} />
           <Route path="journal" element={<Journal />} />
