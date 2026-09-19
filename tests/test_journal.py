@@ -410,17 +410,29 @@ class TestForwardReturns:
         assert horizons == {"1d"}
 
 
-def _seed_returns(db, values: list[tuple[str, bool, float, float]]) -> None:
+def _seed_returns(
+    db,
+    values: list[tuple[str, bool, float, float]],
+    score_version: str | None = "current",
+    prefix: str = "e",
+) -> None:
     """Write journal entries with pre-computed returns.
 
     Each tuple is (asset, is_control, return_raw, return_vs_btc). Statistics
     tests care about the arithmetic on top of the returns, not about how the
     returns were derived, so this bypasses the price path deliberately.
+
+    D-076: entries are stamped with the CURRENT score_version by default,
+    because compute_statistics now reads one cohort (the current method's)
+    unless told otherwise. Before D-076 these rows had no version and every
+    cohort was blended; pass score_version=None to write such a legacy row.
     """
+    if score_version == "current":
+        score_version = fr.current_score_version()
     entries = []
     returns = []
     for index, (asset, is_control, raw, vs_btc) in enumerate(values):
-        entry_id = f"e{index}"
+        entry_id = f"{prefix}{index}"
         entries.append(
             {
                 "entry_id": entry_id,
@@ -437,6 +449,7 @@ def _seed_returns(db, values: list[tuple[str, bool, float, float]]) -> None:
                 "news_context": "[]",
                 "events_context": "[]",
                 "created_at_utc": f"{RUN_DATE}T00:00:00Z",
+                "score_version": score_version,
             }
         )
         returns.append(

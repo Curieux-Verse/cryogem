@@ -129,6 +129,8 @@ def build_latest(db: Database, run_date: str, payload: dict[str, Any]) -> dict[s
     publish that failed until 19:00 are different situations, and the reader
     needs to see the second one.
     """
+    from src.screening.layer2_score import live_blocks_for_run
+
     layer3 = payload.get("layer3") or {}
     ranked = []
     for row in payload["ranked"]:
@@ -139,14 +141,11 @@ def build_latest(db: Database, run_date: str, payload: dict[str, Any]) -> dict[s
                 "rank": row["rank"],
                 "asset": row["base_asset"],
                 "score": row["total_score"],
-                "blocks": {
-                    "fundamental": row["score_fundamental"],
-                    "supply": row["score_supply"],
-                    "sector": row["score_sector"],
-                    "events": row["score_events"],
-                    "attention": row["score_attention"],
-                    "drawdown": row["score_drawdown"],
-                },
+                # D-075: share of the run's live block weight this asset was
+                # measured on, 0-1. Null on rows scored before it existed.
+                "coverage": row.get("coverage"),
+                "score_version": _version(row.get("score_version")),
+                "blocks": _blocks(row),
                 "flags": daily.flags_for(percentiles),
                 "sector": get_config().sectors.sector_of(row["base_asset"]),
                 # The detail file this row links to. Not derivable in the
@@ -173,6 +172,15 @@ def build_latest(db: Database, run_date: str, payload: dict[str, Any]) -> dict[s
         "schema_version": SCHEMA_VERSION,
         "run_date": run_date,
         "generated_at_utc": utc_now_iso(),
+        # D-076: the scoring method behind this ranking (the head row's; one
+        # run is scored by one method).
+        "score_version": (
+            ranked[0]["score_version"] if ranked else get_config().thresholds.layer2.score_version
+        ),
+        # D-075: blocks that counted for every asset this run. A block absent
+        # here was dark -- measured for too few survivors -- and counted for
+        # nobody. Derived from the stored rows, exactly (live_blocks_for_run).
+        "live_blocks": live_blocks_for_run(db, run_date),
         "funnel": {
             "universe": payload["universe"],
             "disqualified": payload["universe"] - payload["survivors"],
@@ -188,6 +196,20 @@ def build_latest(db: Database, run_date: str, payload: dict[str, Any]) -> dict[s
         "ranked": ranked,
         "report_top_n": payload["report_top_n"],
     }
+
+
+def _blocks(row: dict[str, Any]) -> dict[str, Any]:
+    """Every Layer 2 block score of a stored row, keyed by block name."""
+    from src.screening.layer2_score import BLOCK_COLUMNS
+
+    return {block: row.get(column) for block, column in BLOCK_COLUMNS.items()}
+
+
+def _version(value: str | None) -> str:
+    """A row's scoring method; unstamped rows predate D-076 and were gem-v1."""
+    from src.screening.layer2_score import LEGACY_SCORE_VERSION
+
+    return value or LEGACY_SCORE_VERSION
 
 
 # ==============================================================================
@@ -277,7 +299,8 @@ def build_asset(
     checks = json_load(l1_row["check_values"], {}) or {}
     l2 = db.query_one(
         "SELECT total_score, rank, universe_size, percentiles, score_fundamental, "
-        "score_supply, score_sector, score_events, score_attention, score_drawdown "
+        "score_supply, score_momentum, score_sector, score_events, score_attention, "
+        "score_drawdown, coverage, score_version "
         "FROM layer2_result WHERE run_date = ? AND base_asset = ?",
         (run_date, base_asset),
     )
@@ -362,14 +385,9 @@ def build_asset(
                 "total_score": l2["total_score"],
                 "rank": l2["rank"],
                 "universe_size": l2["universe_size"],
-                "blocks": {
-                    "fundamental": l2["score_fundamental"],
-                    "supply": l2["score_supply"],
-                    "sector": l2["score_sector"],
-                    "events": l2["score_events"],
-                    "attention": l2["score_attention"],
-                    "drawdown": l2["score_drawdown"],
-                },
+                "coverage": l2["coverage"],
+                "score_version": _version(l2["score_version"]),
+                "blocks": _blocks(l2),
                 "percentiles": json_load(l2["percentiles"], {}) or {},
             }
             if l2
@@ -414,12 +432,22 @@ def build_journal(db: Database) -> dict[str, Any]:
 
     cfg = get_config()
     horizons = cfg.thresholds.journal.horizons
-    stats = {h: fr.compute_statistics(h) for h in horizons}
+    # D-076: statistics are per scoring method, never blended. `statistics`
+    # is the CURRENT method's cohort -- the one a reader is deciding whether to
+    # trust -- and every cohort is under `statistics_by_version`.
+    versions = fr.journal_versions(db)
+    by_version = {
+        version: {h: fr.compute_statistics(h, score_version=version) for h in horizons}
+        for version in versions
+    }
+    current = fr.current_score_version()
+    stats = by_version[current]
 
     entries = db.query(
         "SELECT entry_id, run_date, base_asset, rank, total_score, is_control, "
-        "       price_at_signal, btc_price_at_signal FROM journal_entry "
-        "ORDER BY run_date DESC, is_control, rank"
+        "       price_at_signal, btc_price_at_signal, "
+        f"      COALESCE(score_version, '{fr.LEGACY_SCORE_VERSION}') AS score_version "
+        "FROM journal_entry ORDER BY run_date DESC, is_control, rank"
     )
     returns = db.query(
         "SELECT entry_id, horizon, return_raw, return_vs_btc, max_favourable, max_adverse "
@@ -439,7 +467,9 @@ def build_journal(db: Database) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "generated_at_utc": utc_now_iso(),
         "horizons": horizons,
+        "score_version": current,
         "statistics": stats,
+        "statistics_by_version": by_version,
         "first_entry_date": first_run,
         # The empty state needs a number, not a shrug: "not enough data" is
         # only useful if it says how much is missing.

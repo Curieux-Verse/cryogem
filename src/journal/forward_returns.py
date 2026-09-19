@@ -32,6 +32,13 @@
 #   4. MAX FAVOURABLE AND MAX ADVERSE EXCURSION on every horizon. A +20%
 #      30-day return that first drew down 40% is not a winning trade, it is a
 #      trade that stopped you out before it worked. Endpoint returns hide that.
+#
+#   5. ONE METHOD PER COHORT (D-076). Every entry is stamped with the
+#      score_version of the ranking that produced it, and every statistic is
+#      computed within one version. A method change (D-071..D-077) restarts
+#      the count rather than borrowing the old method's record: the old
+#      numbers are evidence about the old method only. A NULL version is an
+#      entry written before stamping began, and reads as gem-v1.
 # -----------------------------------------------------------------------------
 """
 
@@ -57,6 +64,27 @@ BTC = "BTC"
 #: Binance contract and are the only series the backtest can rebuild, so the
 #: journal and the harness read the same bars and agree by construction (D-047).
 PRICE_SOURCE = "binance_klines"
+
+#: Entries written before D-076 carry no version; they were all this method.
+#: Mirrors layer2_score.LEGACY_SCORE_VERSION without importing pandas here.
+LEGACY_SCORE_VERSION = "gem-v1"
+
+#: SQL for an entry's cohort, NULL read as the legacy method.
+_COHORT = f"COALESCE(e.score_version, '{LEGACY_SCORE_VERSION}')"
+
+
+def current_score_version() -> str:
+    return get_config().thresholds.layer2.score_version
+
+
+def journal_versions(db: Database) -> list[str]:
+    """Every cohort on file, the current method first, then newest name first."""
+    current = current_score_version()
+    found = {
+        r["v"]
+        for r in db.query(f"SELECT DISTINCT {_COHORT} AS v FROM journal_entry e")
+    }
+    return [current] + sorted(found - {current}, reverse=True)
 
 
 def _prices_on(db: Database, run_date: str) -> dict[str, float]:
@@ -167,8 +195,10 @@ def _build_entry(
     prices: dict[str, float],
     btc_price: float,
     is_control: bool,
+    score_version: str | None = None,
 ) -> dict[str, Any] | None:
     asset = ranked["base_asset"]
+    score_version = score_version or current_score_version()
     price = prices.get(asset)
     if not price:
         log.warning("journal_entry_skipped_no_price", asset=asset, run_date=run_date)
@@ -179,8 +209,9 @@ def _build_entry(
         (run_date, asset),
     )
     l2 = db.query_one(
-        "SELECT percentiles, score_fundamental, score_supply, score_sector, "
-        "score_events, score_attention, score_drawdown FROM layer2_result "
+        "SELECT percentiles, score_fundamental, score_supply, score_momentum, "
+        "score_sector, score_events, score_attention, score_drawdown, coverage, "
+        "score_version FROM layer2_result "
         "WHERE run_date = ? AND base_asset = ?",
         (run_date, asset),
     )
@@ -226,6 +257,9 @@ def _build_entry(
         "news_context": json_dump(_news_context(db, asset, run_date)),
         "events_context": json_dump(_events_context(db, asset, run_date)),
         "created_at_utc": utc_now_iso(),
+        # D-076. The method of the RANKING this entry belongs to -- a
+        # control shares its day's version, since it is that cohort's control.
+        "score_version": score_version,
     }
 
 
@@ -240,13 +274,18 @@ def write_entries(run_date: str | None = None, seed: int | None = None) -> int:
 
     with get_db() as db:
         ranked = db.query(
-            "SELECT base_asset, rank, total_score FROM layer2_result "
+            "SELECT base_asset, rank, total_score, score_version FROM layer2_result "
             "WHERE run_date = ? ORDER BY rank LIMIT ?",
             (date, top_n),
         )
         if not ranked:
             log.warning("journal_no_ranked_assets", run_date=date)
             return 0
+        # The version the ranking was actually scored with, read from its
+        # rows rather than from today's config: journalling a re-screened or
+        # late day must not relabel its method. An unstamped ranking predates
+        # D-076 and was gem-v1.
+        version = ranked[0].get("score_version") or LEGACY_SCORE_VERSION
 
         prices = _prices_on(db, date)
         btc_price = prices.get(BTC)
@@ -262,7 +301,15 @@ def write_entries(run_date: str | None = None, seed: int | None = None) -> int:
 
         rows: list[dict[str, Any]] = []
         for entry in ranked:
-            row = _build_entry(db, date, entry, prices, btc_price, is_control=False)
+            row = _build_entry(
+                db,
+                date,
+                entry,
+                prices,
+                btc_price,
+                is_control=False,
+                score_version=entry.get("score_version") or version,
+            )
             if row:
                 rows.append(row)
         for asset in controls:
@@ -273,6 +320,7 @@ def write_entries(run_date: str | None = None, seed: int | None = None) -> int:
                 prices,
                 btc_price,
                 is_control=True,
+                score_version=version,
             )
             if row:
                 rows.append(row)
@@ -491,27 +539,36 @@ def _excursion(
     }
 
 
-def compute_statistics(horizon: str = "30d") -> dict[str, Any]:
-    """Signal vs control statistics for one horizon.
+def compute_statistics(horizon: str = "30d", score_version: str | None = None) -> dict[str, Any]:
+    """Signal vs control statistics for one horizon, within ONE method cohort.
 
     Reports median AND mean separately, always. They diverge, and the
     divergence IS the finding: a strategy whose mean is positive and median
     negative is a lottery-ticket strategy and must be sized as one.
+
+    D-076: `score_version` picks the cohort; the default is the method in
+    force now, because that is the one a reader is deciding whether to trust.
+    There is deliberately no way to ask for all cohorts at once.
     """
+    version = score_version or current_score_version()
     with get_db() as db:
         rows = db.query(
             "SELECT e.is_control, e.base_asset, e.run_date, e.rank, "
             "       f.return_raw, f.return_vs_btc, f.max_favourable, f.max_adverse "
             "FROM journal_entry e JOIN forward_return f ON f.entry_id = e.entry_id "
-            "WHERE f.horizon = ?",
-            (horizon,),
+            f"WHERE f.horizon = ? AND {_COHORT} = ?",
+            (horizon, version),
         )
-        total_entries = db.scalar("SELECT COUNT(*) FROM journal_entry") or 0
+        total_entries = (
+            db.scalar(f"SELECT COUNT(*) FROM journal_entry e WHERE {_COHORT} = ?", (version,))
+            or 0
+        )
 
     signals = [r for r in rows if not r["is_control"]]
     controls = [r for r in rows if r["is_control"]]
 
     return {
+        "score_version": version,
         "horizon": horizon,
         "entries_total": total_entries,
         "entries_with_returns": len(rows),
@@ -580,10 +637,25 @@ def render_report() -> str:
     """
     cfg = get_config()
     lines = ["# Journal", ""]
+    with get_db() as db:
+        versions = journal_versions(db)
+    lines += [
+        "_Grouped by scoring method (D-076). Cohorts are never blended: an older "
+        "method's record is not evidence for the current one._",
+        "",
+    ]
+    for version in versions:
+        current = " (current method)" if version == current_score_version() else ""
+        lines += [f"## Cohort `{version}`{current}", ""]
+        lines += _render_cohort(version, cfg.thresholds.journal.horizons)
+    return "\n".join(lines)
 
-    for horizon in cfg.thresholds.journal.horizons:
-        stats = compute_statistics(horizon)
-        lines.append(f"## Horizon {horizon}")
+
+def _render_cohort(version: str, horizons: list[str]) -> list[str]:
+    lines: list[str] = []
+    for horizon in horizons:
+        stats = compute_statistics(horizon, score_version=version)
+        lines.append(f"### Horizon {horizon}")
         signal = stats["signal"]
         control = stats["control"]
 
@@ -635,7 +707,7 @@ def render_report() -> str:
             lines.append(f"_Edge vs control: {edge.get('reason')}_")
         lines.append("")
 
-    return "\n".join(lines)
+    return lines
 
 
 def _pct(value: float | None, of_one: bool = False) -> str:
@@ -645,10 +717,13 @@ def _pct(value: float | None, of_one: bool = False) -> str:
 
 
 __all__ = [
+    "LEGACY_SCORE_VERSION",
     "PRICE_SOURCE",
     "backfill_returns",
     "close_on",
     "compute_statistics",
+    "current_score_version",
+    "journal_versions",
     "draw_controls",
     "entries_on",
     "entry_close",
