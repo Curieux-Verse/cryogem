@@ -4,6 +4,7 @@ import { STALE_AFTER_HOURS, ageHours, getLatest } from "../lib/data";
 
 const ROUTES = [
   { to: "/", label: "Screen" },
+  { to: "/pulse", label: "Pulse" },
   { to: "/rejected", label: "Rejected" },
   { to: "/journal", label: "Journal" },
   { to: "/events", label: "Events" },

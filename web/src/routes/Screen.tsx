@@ -7,15 +7,63 @@ import { getLatest } from "../lib/data";
 import { num, pct, signedPct } from "../lib/format";
 import { useData } from "../lib/useData";
 import type { RankedRow } from "../lib/types";
+import {
+  BLOCKS,
+  MISSING_REDISTRIBUTED,
+  MISSING_SCORES_NOTHING,
+  blockStatus,
+  coverageShort,
+  coverageSummary,
+  coverageText,
+} from "../lib/blocks";
 
-const BLOCKS = [
-  ["fundamental", "Fund"],
-  ["supply", "Supp"],
-  ["sector", "Sect"],
-  ["events", "Evnt"],
-  ["attention", "Attn"],
-  ["drawdown", "DD"],
-] as const;
+/** One block cell. Dark and absent blocks say so in words, never as a zero. */
+function BlockCell({
+  row,
+  blockKey,
+  label,
+  liveBlocks,
+  v2,
+}: {
+  row: RankedRow;
+  blockKey: (typeof BLOCKS)[number]["key"];
+  label: string;
+  liveBlocks: readonly string[] | null;
+  v2: boolean;
+}) {
+  const status = blockStatus(blockKey, row.blocks, liveBlocks);
+  return (
+    <MicroBar
+      value={row.blocks[blockKey]}
+      label={label}
+      status={status === "dark" || status === "absent" ? status : undefined}
+      missing={v2 ? "zero" : "redistributed"}
+    />
+  );
+}
+
+/** "4/6 · 82%", with the full sentence as its accessible name. */
+function CoverageCell({
+  row,
+  liveBlocks,
+}: {
+  row: RankedRow;
+  liveBlocks: readonly string[] | null;
+}) {
+  const summary = coverageSummary(row.blocks, liveBlocks, row.coverage);
+  const full = coverageText(summary);
+  const low =
+    summary.weight !== null ? summary.weight < 0.5 : summary.measured * 2 < summary.of;
+  return (
+    <span
+      className={`whitespace-nowrap font-mono text-xs ${low ? "text-fail" : "text-muted"}`}
+      title={full}
+      aria-label={`Coverage: ${full}`}
+    >
+      {coverageShort(summary)}
+    </span>
+  );
+}
 
 type SortKey = "rank" | "score" | "asset";
 
@@ -26,6 +74,21 @@ export default function Screen() {
   const [showAll, setShowAll] = useState(false);
 
   const rows: RankedRow[] = latest.state === "ready" ? latest.data.ranked : [];
+  // gem-v2 files name their live blocks; older files do not, and there a
+  // missing block's weight was redistributed rather than zeroed. Both render
+  // honestly, each with its own explanation.
+  const liveBlocks: readonly string[] | null =
+    latest.state === "ready" && Array.isArray(latest.data.live_blocks)
+      ? latest.data.live_blocks
+      : null;
+  const v2 =
+    latest.state === "ready" &&
+    (Boolean(latest.data.score_version) ||
+      liveBlocks !== null ||
+      rows.some((r) => typeof r.coverage === "number"));
+  const darkBlocks = BLOCKS.filter(
+    ({ key }) => liveBlocks !== null && !liveBlocks.includes(key),
+  );
   const sectors = useMemo(
     () => ["all", ...Array.from(new Set(rows.map((r) => r.sector))).sort()],
     [rows],
@@ -59,6 +122,7 @@ export default function Screen() {
             data.regime?.btc_return_30d !== undefined
               ? ` · BTC 30d ${signedPct(data.regime.btc_return_30d)}`
               : ""}
+            {data.score_version ? ` · score ${data.score_version}` : ""}
           </p>
 
           <div className="mt-8">
@@ -73,7 +137,22 @@ export default function Screen() {
 
           <Section
             title={`Ranked (${visible.length} of ${rows.length})`}
-            note="Cross-sectional percentiles within today's survivors. A blank block had no data for that asset, and its weight was redistributed across the blocks that did rather than counted as zero."
+            note={
+              <>
+                Cross-sectional percentiles within today&apos;s survivors.{" "}
+                {v2 ? MISSING_SCORES_NOTHING : MISSING_REDISTRIBUTED}
+                {darkBlocks.length ? (
+                  <>
+                    {" "}
+                    Dark this run (no source):{" "}
+                    <span className="font-mono text-xs">
+                      {darkBlocks.map((b) => b.label.toLowerCase()).join(", ")}
+                    </span>
+                    .
+                  </>
+                ) : null}
+              </>
+            }
           >
             <div className="mb-4 flex flex-wrap items-end gap-4">
               <label className="text-xs text-muted">
@@ -116,9 +195,9 @@ export default function Screen() {
             </div>
 
             <TableWrap narrow="hide">
-              <table className="w-full min-w-[46rem] border-collapse text-sm">
+              <table className="w-full min-w-[54rem] border-collapse text-sm">
                 <caption className="sr-only">
-                  Ranked survivors with their six Layer 2 block scores and Layer 3 flags
+                  Ranked survivors with their Layer 2 block scores, coverage, and Layer 3 flags
                 </caption>
                 <thead>
                   <tr className="border-b border-line text-left">
@@ -131,11 +210,25 @@ export default function Screen() {
                     <th scope="col" className="py-2 pr-3 text-right">
                       Score
                     </th>
-                    {BLOCKS.map(([key, label]) => (
-                      <th key={key} scope="col" className="py-2 pr-3 text-right">
-                        {label}
-                      </th>
-                    ))}
+                    {BLOCKS.map(({ key, short, label }) => {
+                      const dark = liveBlocks !== null && !liveBlocks.includes(key);
+                      return (
+                        <th
+                          key={key}
+                          scope="col"
+                          className={`py-2 pr-3 text-right ${dark ? "text-muted/60" : ""}`}
+                          title={dark ? `${label}: dark this run (no source)` : label}
+                        >
+                          {short}
+                          <span className="sr-only">
+                            {` (${label}${dark ? ", dark, no source" : ""})`}
+                          </span>
+                        </th>
+                      );
+                    })}
+                    <th scope="col" className="py-2 pr-3 text-right">
+                      Coverage
+                    </th>
                     <th scope="col" className="py-2 pr-3">
                       Sector
                     </th>
@@ -157,11 +250,20 @@ export default function Screen() {
                         </Link>
                       </td>
                       <td className="num py-2 pr-3">{num(row.score)}</td>
-                      {BLOCKS.map(([key, label]) => (
+                      {BLOCKS.map(({ key, label }) => (
                         <td key={key} className="py-2 pr-3 text-right">
-                          <MicroBar value={row.blocks[key]} label={label} />
+                          <BlockCell
+                            row={row}
+                            blockKey={key}
+                            label={label}
+                            liveBlocks={liveBlocks}
+                            v2={v2}
+                          />
                         </td>
                       ))}
+                      <td className="py-2 pr-3 text-right">
+                        <CoverageCell row={row} liveBlocks={liveBlocks} />
+                      </td>
                       <td className="py-2 pr-3 text-xs text-muted">{row.sector}</td>
                       <td className="py-2">
                         <span className="flex flex-wrap gap-1">
@@ -204,13 +306,24 @@ export default function Screen() {
                     </p>
                     <p className="num text-base">{num(row.score)}</p>
                   </div>
-                  <p className="mt-1 text-xs text-muted">{row.sector}</p>
+                  <p className="mt-1 flex flex-wrap items-baseline justify-between gap-2 text-xs text-muted">
+                    <span>{row.sector}</span>
+                    <CoverageCell row={row} liveBlocks={liveBlocks} />
+                  </p>
                   <dl className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
-                    {BLOCKS.map(([key, label]) => (
+                    {BLOCKS.map(({ key, short, label }) => (
                       <div key={key} className="flex items-baseline justify-between gap-2">
-                        <dt className="text-[11px] text-muted">{label}</dt>
+                        <dt className="text-[11px] text-muted" title={label}>
+                          {short}
+                        </dt>
                         <dd>
-                          <MicroBar value={row.blocks[key]} label={label} />
+                          <BlockCell
+                            row={row}
+                            blockKey={key}
+                            label={label}
+                            liveBlocks={liveBlocks}
+                            v2={v2}
+                          />
                         </dd>
                       </div>
                     ))}

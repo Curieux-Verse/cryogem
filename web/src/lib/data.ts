@@ -13,6 +13,7 @@ import type {
   Journal,
   Latest,
   Manifest,
+  Pulse,
   Rejected,
 } from "./types";
 
@@ -57,6 +58,39 @@ export const getHealth = () => loadJson<Health>("health.json");
 export const getHistory = () => loadJson<History>("history.json");
 export const getAsset = (file: string) =>
   loadJson<AssetDetail>(file.replace(/^assets\//, "assets/"));
+
+/** pulse.json changes HOURLY while every other file changes daily, so it
+ *  bypasses the in-memory cache and carries a cache-buster that rolls every
+ *  5 minutes: the Pages CDN and the browser cannot serve an hour-old copy,
+ *  while repeated renders inside one window still share a URL. */
+export const PULSE_REFRESH_MS = 5 * 60_000;
+
+export async function getPulse(): Promise<Pulse> {
+  const bucket = Math.floor(Date.now() / PULSE_REFRESH_MS);
+  const response = await fetch(`${DATA_ROOT}/pulse.json?t=${bucket}`, { cache: "no-cache" });
+  if (response.status === 404) {
+    throw new MissingData("pulse.json has not been published");
+  }
+  if (!response.ok) {
+    throw new Error(`pulse.json: HTTP ${response.status}`);
+  }
+  // Pages serves index.html-style fallbacks for some hosts; a non-JSON body
+  // is "not published", not a crash.
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new MissingData("pulse.json is not valid JSON");
+  }
+  if (!data || typeof data !== "object") {
+    throw new MissingData("pulse.json is empty");
+  }
+  return data as Pulse;
+}
+
+/** A Pulse older than this is not shown as current (plan section 6: status
+ *  "unavailable" is written when no pulse_result landed in 3h). */
+export const PULSE_STALE_AFTER_HOURS = 3;
 
 /** Hours since an ISO instant. Drives the stale-data banner. */
 export function ageHours(iso: string): number {
