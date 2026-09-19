@@ -160,6 +160,19 @@ supply_history:
   # The Demo plan serves 365 days of history; two 90-day windows need ~187.
   history_days: 365
 
+# ------------------------------------------------------------------------------
+# Pulse market data (D-078): 1H klines, 1H open interest and settled funding for
+# Layer 1 survivors, fetched every hour inside collect-hourly. Features are
+# computed from the fetched window in-process; only bars and OI newer than the
+# series_cursor are written, so an hour costs ~2 writes per asset.
+# ------------------------------------------------------------------------------
+pulse:
+  klines_limit: 500
+  oi_limit: 500
+  funding_limit: 100
+  concurrency: 8
+  benchmark_asset: "BTC"
+
 contracts:
   # CoinGecko /coins/{id} lookups confirming the origin chain of a multi-chain
   # token. 10/min on the free tier, so bounded; the rest wait for the next run.

@@ -56,10 +56,20 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "asset_contract": ("coingecko_id",),
     "address_label": ("chain", "address"),
     "emission_protocol": ("slug",),
+    # Pulse, the hourly clock (D-078..D-081).
+    "bar_1h": ("base_asset", "ts_open_utc"),
+    "oi_1h": ("base_asset", "ts_utc"),
+    "series_cursor": ("series", "base_asset"),
+    "pulse_result": ("ts_utc", "base_asset"),
+    "pulse_journal": ("entry_id",),
+    "pulse_forward_return": ("entry_id", "horizon"),
+    "pulse_alert": ("ts_utc", "base_asset", "kind"),
 }
 
 # Append-only tables: never UPDATE, only INSERT OR IGNORE.
-APPEND_ONLY = frozenset({"journal_entry", "forward_return"})
+APPEND_ONLY = frozenset(
+    {"journal_entry", "forward_return", "pulse_journal", "pulse_forward_return"}
+)
 
 #: Columns an upsert never overwrites with NULL. Only same-day re-runs can hit
 #: this (the date is in every key), and there a NULL means the enrichment call

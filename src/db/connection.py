@@ -64,6 +64,15 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         # D-061: 'horizon', or 'delisted' when the asset stopped trading first.
         ("exit_reason", "TEXT"),
     ),
+    # D-075, D-076, D-077: coverage, scoring method, and the momentum block.
+    "layer2_result": (
+        ("score_momentum", "REAL"),
+        ("coverage", "REAL"),
+        ("score_version", "TEXT"),
+    ),
+    "journal_entry": (("score_version", "TEXT"),),
+    # D-077: aggressor-flagged buy volume, for 7-day taker flow.
+    "price_daily": (("taker_buy_usd", "REAL"),),
 }
 
 #: Statements that depend on an ADDED column, so they must run after the

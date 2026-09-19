@@ -123,6 +123,8 @@ class Layer2Weights(BaseModel):
     events: float
     attention: float
     drawdown: float
+    # D-077: 7-day taker flow, vol-adjusted momentum and daily trend.
+    momentum: float
 
     @model_validator(mode="after")
     def _all_positive(self) -> "Layer2Weights":
@@ -148,6 +150,13 @@ class Layer2Thresholds(BaseModel):
     supply_growth_window_days: int
     supply_smoothing_days: int
     emissions_trajectory_tolerance: float
+    # D-075: a block (or metric) counts toward every asset's denominator once
+    # it is measured for at least this many survivors; below it, it is dark
+    # for everyone and drops out for everyone.
+    live_min_assets: int
+    # D-076: stamped on layer2_result and journal_entry. Bump it, with a
+    # D-number, whenever the method changes; never edit a version in place.
+    score_version: str
 
 
 class Layer3Thresholds(BaseModel):
@@ -191,6 +200,94 @@ class JournalThresholds(BaseModel):
         return self
 
 
+class PulseWeights(BaseModel):
+    """Pulse component weights (D-079). Locked when shipped; change = new version."""
+
+    model_config = {"extra": "forbid"}
+
+    flow: float
+    structure_4h: float
+    momentum: float
+    thrust: float
+    oi_confirm: float
+    structure_1h: float
+
+    @model_validator(mode="after")
+    def _all_positive(self) -> "PulseWeights":
+        for name, value in self.model_dump().items():
+            if value <= 0:
+                raise ValueError(f"pulse weight '{name}' must be positive, got {value}")
+        return self
+
+    def as_dict(self) -> dict[str, float]:
+        return self.model_dump()
+
+
+class PulseStructure(BaseModel):
+    """EMA stack and trendline-break parameters for the 1H and 4H states."""
+
+    model_config = {"extra": "forbid"}
+
+    ema_fast: int
+    ema_slow: int
+    swing_window_bars: int
+    trendline_min_touches: int
+    trendline_tolerance_pct: float
+    lookback_bars: int
+    max_bars_since_break: int
+
+
+class PulseThresholds(BaseModel):
+    """The hourly clock (docs/PLAN_ACTIVE_SCREENER.md; D-074, D-079..D-081)."""
+
+    model_config = {"extra": "forbid"}
+
+    score_version: str
+    weights: PulseWeights
+    # Within the flow component: weight of the 4H window relative to 24H.
+    flow_4h_relative_weight: float
+    # F2: the baseline is the median volume of this many prior bars.
+    thrust_baseline_bars: int
+    # F1/F3 time-series z-scores use this many days of the asset's own history.
+    zscore_lookback_days: int
+    structure: PulseStructure
+    # F4: an OI change smaller than this (fraction, contracts) reads as flat.
+    oi_flat_change: float
+    # R1 / R2: percentile of the asset's OWN history that counts as extreme.
+    extreme_own_pctile: float
+    crowding_multiplier: float
+    leverage_no_move_multiplier: float
+    # R2: |24h return| below this many 24h sigmas reads as "no move".
+    no_move_sigma: float
+    # R3: below this 24h quote volume, taker flow is noise; excluded from Pulse.
+    min_quote_volume_24h_usd: float
+    # Fewest closed 1H bars before an asset is scored at all.
+    min_bars_1h: int
+    # D-075 applied to Pulse: live-component threshold.
+    live_min_assets: int
+    # ALIGNED = Gem rank <= gem_rank_max AND Pulse >= min_score AND 4H state in
+    # aligned_states AND no risk flag.
+    aligned_gem_rank_max: int
+    aligned_min_score: float
+    aligned_states: list[str]
+    # Journal (D-081): entries when an asset ENTERS the top N or ALIGNED.
+    journal_top_n: int
+    journal_horizons_hours: list[int]
+    # Telegram (D-080): state changes only, capped per UTC day.
+    alert_max_per_day: int
+    alert_bear_break_gem_top: int
+
+    @model_validator(mode="after")
+    def _sane(self) -> "PulseThresholds":
+        if not 0 < self.crowding_multiplier <= 1 or not 0 < self.leverage_no_move_multiplier <= 1:
+            raise ValueError("pulse penalty multipliers must be in (0, 1]")
+        if not 0 < self.extreme_own_pctile < 100:
+            raise ValueError("extreme_own_pctile must be a percentile in (0, 100)")
+        if self.structure.ema_fast >= self.structure.ema_slow:
+            raise ValueError("pulse ema_fast must be shorter than ema_slow")
+        return self
+
+
 class BacktestThresholds(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -211,6 +308,7 @@ class Thresholds(BaseModel):
     collectors: CollectorThresholds
     journal: JournalThresholds
     backtest: BacktestThresholds
+    pulse: PulseThresholds
 
 
 # ==============================================================================
@@ -286,6 +384,23 @@ class SupplyHistorySettings(BaseModel):
     history_days: int
 
 
+# Hourly 1H bars, OI and funding for Pulse. See DECISIONS.md D-078.
+class PulseSettings(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    # 1H klines per request: 500 keeps weight at 2 and spans ~21 days, enough
+    # for EMA50 on 4H bars and a 30-bar volume baseline.
+    klines_limit: int
+    # openInterestHist rows per request (period 1h). Binance keeps 30 days.
+    oi_limit: int
+    # Settled funding rates per request, for the asset's own percentile.
+    funding_limit: int
+    # Concurrent requests per endpoint family.
+    concurrency: int
+    # Always add this asset to the fetch set (vs-BTC returns, journal).
+    benchmark_asset: str
+
+
 class ContractSettings(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -325,6 +440,7 @@ class Settings(BaseModel):
     contracts: ContractSettings
     unlocks: UnlockSettings
     supply_history: SupplyHistorySettings
+    pulse: PulseSettings
 
 
 # ==============================================================================
