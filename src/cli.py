@@ -293,6 +293,108 @@ def doctor_command() -> None:
         raise typer.Exit(code=1)
 
 
+# ------------------------------------------------------------------------------
+# pulse: the hourly clock (docs/PLAN_ACTIVE_SCREENER.md; D-080, D-081)
+# ------------------------------------------------------------------------------
+pulse_app = typer.Typer(
+    no_args_is_help=True,
+    help="Pulse, the hourly clock: score, bake pulse.json, report the journal.",
+)
+app.add_typer(pulse_app, name="pulse")
+
+
+@pulse_app.command("run")
+def pulse_run_command(
+    as_of: Optional[str] = typer.Option(
+        None,
+        "--as-of",
+        help="UTC ISO instant; the hour scored is its floor. Default: the last closed hour.",
+    ),
+) -> None:
+    """Collect, score one closed hour, journal it, and send state-change alerts.
+
+    Exit 1 when nothing was scored (collector failed, no survivors) or the
+    journal failed; the hour can be re-run safely, every write is idempotent.
+    """
+    from src.pulse.run import run_pulse
+    from src.timeutil import parse_instant
+
+    stamp = None
+    if as_of:
+        try:
+            stamp = parse_instant(as_of)
+        except ValueError as exc:
+            typer.secho(f"invalid --as-of {as_of!r}: {exc}", fg=typer.colors.RED)
+            raise typer.Exit(code=2) from exc
+
+    summary = asyncio.run(run_pulse(stamp))
+    if not summary.get("ok"):
+        typer.secho(
+            f"pulse {summary.get('ts_utc')}: NOT scored -- {summary.get('error')}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+    journal = summary.get("journal") or {}
+    typer.echo(
+        f"pulse {summary['ts_utc']}: {summary['scored']}/{summary['universe']} scored, "
+        f"aligned {summary['aligned'] or '-'}, journal +{journal.get('entries', 0)} "
+        f"(+{journal.get('controls', 0)} control), {summary.get('returns_filled', 0)} "
+        f"returns filled, alerts {(summary.get('alerts') or {}).get('reason', '-')}"
+    )
+    if summary.get("journal_error"):
+        typer.secho(
+            f"pulse journal failed ({summary['journal_error']}): re-run this hour",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+
+@pulse_app.command("bake")
+def pulse_bake_command() -> None:
+    """Write data/public/pulse.json from the newest pulse_result hour.
+
+    Always leaves a file: 'unavailable' when there is no fresh hour (exit 0,
+    a legitimate state) or the database cannot be read (exit 1).
+    """
+    from src.config import get_config
+    from src.db.connection import get_db
+    from src.pulse.publish import bake_pulse_json
+
+    cfg = get_config()
+    out_dir = cfg.path(cfg.settings.reporting.public_json_dir)
+    try:
+        with get_db() as db:
+            path = bake_pulse_json(db, out_dir)
+    except Exception as exc:  # noqa: BLE001 - the file already says "unavailable"
+        # A failed connection never reached bake_pulse_json, and a file left
+        # from an earlier bake would ship stale data as "ok": overwrite it.
+        try:
+            bake_pulse_json(None, out_dir)
+        except Exception:  # noqa: BLE001 - expected: it re-raises by design
+            pass
+        typer.secho(f"pulse bake: unavailable ({type(exc).__name__})", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    import json
+
+    status = json.loads(path.read_text(encoding="utf-8"))["status"]
+    typer.echo(f"wrote {path} (status {status})")
+
+
+@pulse_app.command("report")
+def pulse_report_command(
+    as_json: bool = typer.Option(False, "--json", help="Print the raw report as JSON."),
+) -> None:
+    """Pulse journal results by score_version, trigger and horizon. Observational only."""
+    import json
+
+    from src.db.connection import get_db
+    from src.pulse.journal import pulse_report, render_report
+
+    with get_db() as db:
+        report = pulse_report(db)
+    typer.echo(json.dumps(report, indent=2) if as_json else render_report(report))
+
+
 def main() -> None:
     try:
         app()
