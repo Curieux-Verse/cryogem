@@ -172,7 +172,11 @@ pulse:
   crowding_multiplier: 0.7            # R1: funding AND OI both extreme
   leverage_no_move_multiplier: 0.8    # R2: OI extreme with no price move (TRB)
   no_move_sigma: 1.0
-  min_quote_volume_24h_usd: 5000000   # TUNE_ME R3: thinner books excluded
+  # TUNE_ME R3: thinner books excluded. Measured 2026-09-19 on the 158 ranked
+  # survivors: $5M excluded 56 (9 of the Gem top 25, incl. ONT, FLOW, HOT, XEC),
+  # which would make ALIGNED unreachable for most of the ranking; $1M excludes
+  # 6 books (RPL, BNT, BANANAS31, CHEEMS, NMR, NXPC) where hourly flow is noise.
+  min_quote_volume_24h_usd: 1000000
   min_bars_1h: 168                    # a week of closed bars before scoring
   live_min_assets: 5
   aligned_gem_rank_max: 25

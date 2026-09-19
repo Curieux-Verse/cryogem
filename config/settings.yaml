@@ -171,7 +171,8 @@ supply_history:
 # Pulse market data (D-078): 1H klines, 1H open interest and settled funding for
 # Layer 1 survivors, fetched every hour inside collect-hourly. Features are
 # computed from the fetched window in-process; only bars and OI newer than the
-# series_cursor are written, so an hour costs ~2 writes per asset.
+# series_cursor are written: ~4 writes per asset an hour (a bar, an OI row
+# and their two cursors), ~0.47M a month at ~160 survivors.
 # ------------------------------------------------------------------------------
 pulse:
   # 499, not 500: Binance documents limit [500, 1000] as weight 5 and [100, 500)
@@ -179,7 +180,10 @@ pulse:
   # under either reading and costs one bar (D-078).
   klines_limit: 499
   oi_limit: 500
-  funding_limit: 100
+  # 1000 (the endpoint maximum, still one call) so R1's own-history percentile
+  # spans ~333 days of an 8h contract and ~41 days of a 1h one; 100 covered as
+  # little as 4 days.
+  funding_limit: 1000
   concurrency: 8
   benchmark_asset: "BTC"
 
