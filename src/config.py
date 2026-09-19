@@ -388,7 +388,7 @@ class SupplyHistorySettings(BaseModel):
 class PulseSettings(BaseModel):
     model_config = {"extra": "forbid"}
 
-    # 1H klines per request: 500 keeps weight at 2 and spans ~21 days, enough
+    # 1H klines per request: 499 keeps weight at 2 and spans ~21 days, enough
     # for EMA50 on 4H bars and a 30-bar volume baseline.
     klines_limit: int
     # openInterestHist rows per request (period 1h). Binance keeps 30 days.

@@ -43,6 +43,7 @@ from src.collectors.news import NewsCollector
 from src.collectors.supply_history import SupplyHistoryCollector
 from src.collectors.unlocks import UnlockCollector
 from src.logging_setup import get_logger
+from src.pulse.data import BinancePulseCollector
 
 log = get_logger("collectors.registry")
 
@@ -66,6 +67,8 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     "news": NewsCollector,
     "binance_klines": BinanceKlinesCollector,
     "supply_history": SupplyHistoryCollector,
+    # Pulse (D-078). In no tier: src/pulse/run.py runs it and reads its window.
+    "binance_pulse": BinancePulseCollector,
 }
 
 #: Ordered per tier. Universe first -- later collectors read it.
