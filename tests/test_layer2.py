@@ -31,10 +31,8 @@ def frame(assets: list[str], **columns) -> pd.DataFrame:
         "revenue_annualised": np.nan,
         "active_addresses_24h": np.nan,
         "has_fundamentals": 0,
+        "emissions_annual": np.nan,
         "emissions_trajectory": None,
-        "burned_pct_of_total": np.nan,
-        "staked_ratio": np.nan,
-        "staked_is_team_controlled": np.nan,
         "social_volume_z": np.nan,
         "social_dominance": np.nan,
         "days_to_next_major_unlock": np.nan,
@@ -179,16 +177,26 @@ class TestBlockBehaviour:
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert pd.isna(scored.loc["NOATH", "drawdown"])
 
-    def test_team_controlled_stake_is_discounted(self):
-        """Staked supply reduces float only if it is not the team's own stake."""
-        df = frame(["TEAM", "REAL"])
-        df.loc[:, "staked_ratio"] = 0.5
-        df.loc["TEAM", "staked_is_team_controlled"] = 1
-        df.loc["REAL", "staked_is_team_controlled"] = 0
-        scorer = Layer2Scorer(RUN_DATE)
-        _, metrics = scorer.score_supply(df)
-        assert pd.isna(metrics["staked_ratio"]["TEAM"])
-        assert pd.notna(metrics["staked_ratio"]["REAL"])
+    def test_lower_net_issuance_scores_higher(self):
+        """D-072. A burn is negative issuance and outranks an inflating supply."""
+        df = frame(["BURN", "FLAT", "INFLATE"])
+        df["emissions_annual"] = [-0.05, 0.0, 0.40]
+        _, metrics = Layer2Scorer(RUN_DATE).score_supply(df)
+        issuance = metrics["net_issuance"]
+        assert issuance["BURN"] > issuance["FLAT"] > issuance["INFLATE"]
+
+    def test_unmeasured_issuance_is_none_not_zero(self):
+        """No supply history is not zero issuance: it must not rank as the cleanest."""
+        df = frame(["UNKNOWN", "A", "B"])
+        df["emissions_annual"] = [np.nan, 0.01, 0.30]
+        _, metrics = Layer2Scorer(RUN_DATE).score_supply(df)
+        assert pd.isna(metrics["net_issuance"]["UNKNOWN"])
+
+    def test_no_supply_metric_without_a_writer_is_listed(self):
+        """D-072. Burned and staked share had no source; they must not look live."""
+        _, metrics = Layer2Scorer(RUN_DATE).score_supply(frame(["A", "B"]))
+        assert "burned_pct" not in metrics
+        assert "staked_ratio" not in metrics
 
     def test_unclassified_sector_scores_none_not_the_mean(self):
         """An unmapped asset must not inherit an average sector score."""

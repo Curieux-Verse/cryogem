@@ -1,40 +1,172 @@
-# base_asset -> DefiLlama protocol slug.
+# base_asset -> DefiLlama protocol slug, or "parent#<slug>" for a parent
+# protocol whose children are summed (D-071).
 #
-# EXPLICIT ONLY. Never guess a mapping: attaching another protocol's revenue to
-# an asset is worse than having no revenue data, because a wrong number scores
-# highly while a missing one honestly scores None and has its weight
-# redistributed.
+# GENERATED AND VERIFIED by scripts/verify_protocol_map.py. Every row passed:
+#   * identity  -- the DefiLlama entry's gecko_id equals this asset's CoinGecko
+#                  id (not its ticker), and a child resolves to its parent;
+#   * substance -- non-zero 30-day fees or revenue on DefiLlama;
+#   * no rival  -- no second live DefiLlama entry claims the same coin.
+# The trailing comment is the evidence as read on the date shown.
 #
-# To add a mapping: find the slug in https://api.llama.fi/protocols and confirm
-# that entry's `symbol` field matches the ticker before adding it here.
-# Verify each of these on the first live run; unverified rows are a guess.
+# Hand edits are allowed but must pass `--check`. Never guess a mapping:
+# another protocol's revenue scores highly, while a missing one honestly
+# scores None and has its weight redistributed.
 
 protocols:
-  AAVE: aave
-  UNI: uniswap
-  CRV: curve-dex
-  LDO: lido
-  PENDLE: pendle
-  ENA: ethena
-  GMX: gmx
-  JUP: jupiter-aggregator
-  RAY: raydium
-  AERO: aerodrome-v1
-  VELO: velodrome-v2
-  CAKE: pancakeswap
-  DYDX: dydx-v4
-  SNX: synthetix
-  COMP: compound-finance
-  MKR: makerdao
-  MORPHO: morpho-blue
-  ETHFI: ether.fi-stake
-  JTO: jito-liquid-staking
-  PYTH: pyth-network
-  LINK: chainlink
-  RUNE: thorchain
-  OSMO: osmosis-dex
-  HYPE: hyperliquid-perps
-  SUSHI: sushiswap
-  BAL: balancer
-  1INCH: 1inch-network
-  FXS: frax-ether
+  "1INCH": "parent#1inch"  # 1inch; gecko_id=1inch; fees30d=$47,089 rev30d=$8,889 (2026-09-19)
+  "2Z": "parent#doublezero"  # DoubleZero; gecko_id=doublezero; fees30d=$280,755 rev30d=$16,940 (2026-09-19)
+  "AAVE": "parent#aave"  # Aave; gecko_id=aave; fees30d=$35,545,772 rev30d=$5,036,438 (2026-09-19)
+  "ADA": "cardano"  # Cardano; gecko_id=cardano; fees30d=$44,644 rev30d=$8,930 (2026-09-19)
+  "AERO": "parent#aerodrome"  # Aerodrome; gecko_id=aerodrome-finance; fees30d=$17,468,288 rev30d=$14,239,916 (2026-09-19)
+  "ANKR": "ankr"  # Ankr; gecko_id=ankr; fees30d=$51,086 rev30d=$5,109 (2026-09-19)
+  "API3": "api3"  # Api3; gecko_id=api3; fees30d=$106,746 rev30d=$5,337 (2026-09-19)
+  "APR": "apriori"  # aPriori; gecko_id=apriori; fees30d=$5,899 rev30d=$851 (2026-09-19)
+  "APT": "aptos"  # Aptos; gecko_id=aptos; fees30d=$97,979 rev30d=$97,979 (2026-09-19)
+  "ARB": "parent#arbitrum-foundation"  # Arbitrum Foundation; gecko_id=arbitrum; fees30d=$3,845,382 rev30d=$3,079,015 (2026-09-19)
+  "ASTER": "parent#astherus"  # Aster; gecko_id=aster-2; fees30d=$6,784,759 rev30d=n/a (2026-09-19)
+  "ATH": "aethir"  # Aethir; gecko_id=aethir; fees30d=$5,194,479 rev30d=$1,038,896 (2026-09-19)
+  "AVAX": "avalanche"  # Avalanche; gecko_id=avalanche-2; fees30d=$135,745 rev30d=$135,745 (2026-09-19)
+  "AVNT": "avantis"  # Avantis; gecko_id=avantis; fees30d=$253,910 rev30d=$0 (2026-09-19)
+  "AXL": "parent#axelar-network"  # Axelar Network; gecko_id=axelar; fees30d=$7,745 rev30d=$0 (2026-09-19)
+  "AXS": "axie-infinity"  # Axie Infinity; gecko_id=axie-infinity; fees30d=$117,156 rev30d=$113,339 (2026-09-19)
+  "BABYDOGE": "parent#babydogecoin"  # BabyDogeCoin; gecko_id=baby-doge-coin; fees30d=$2,987 rev30d=$997 (2026-09-19)
+  "BANANA": "banana-gun"  # Banana Gun; gecko_id=banana-gun; fees30d=$10,059 rev30d=$10,059 (2026-09-19)
+  "BANK": "parent#lorenzo-protocol"  # Lorenzo Protocol; gecko_id=lorenzo-protocol; fees30d=$141,106 rev30d=$7,092 (2026-09-19)
+  "BARD": "parent#lombard-finance"  # Lombard; gecko_id=lombard-protocol; fees30d=$1,029,501 rev30d=$92,074 (2026-09-19)
+  "BASED": "parent#based"  # Based; gecko_id=based-one; fees30d=$208,219 rev30d=$191,047 (2026-09-19)
+  "BERA": "berachain"  # Berachain; gecko_id=berachain-bera; fees30d=$2,843 rev30d=$2,843 (2026-09-19)
+  "BNT": "parent#bancor"  # Bancor; gecko_id=bancor; fees30d=$31,528 rev30d=$2,824 (2026-09-19)
+  "BONK": "parent#bonkfun"  # BONK.fun; gecko_id=bonk; fees30d=$3,711,106 rev30d=$2,164,384 (2026-09-19)
+  "BR": "parent#bedrock"  # Bedrock; gecko_id=bedrock-token; fees30d=$62,571 rev30d=$7,038 (2026-09-19)
+  "BTC": "bitcoin"  # Bitcoin; gecko_id=bitcoin; fees30d=$6,920,043 rev30d=$0 (2026-09-19)
+  "BTW": "bitway-earn"  # Bitway Earn; gecko_id=bitway; fees30d=$560,831 rev30d=$121,108 (2026-09-19)
+  "C98": "parent#coin98-protocol"  # Coin98 Protocol; gecko_id=coin98; fees30d=$63 rev30d=$63 (2026-09-19)
+  "CAKE": "parent#pancakeswap"  # PancakeSwap; gecko_id=pancakeswap-token; fees30d=$23,126,522 rev30d=$7,533,483 (2026-09-19)
+  "CAP": "cap"  # cap; gecko_id=cap-4; fees30d=$482,941 rev30d=$471 (2026-09-19)
+  "CC": "canton"  # Canton; gecko_id=canton-network; fees30d=$50,087,332 rev30d=$50,087,332 (2026-09-19)
+  "CELO": "celo"  # Celo; gecko_id=celo; fees30d=$70,984 rev30d=$0 (2026-09-19)
+  "CETUS": "parent#cetus"  # Cetus; gecko_id=cetus-protocol; fees30d=$649,232 rev30d=$129,848 (2026-09-19)
+  "CFG": "parent#centrifuge"  # Centrifuge; gecko_id=centrifuge-2; fees30d=$5,324,681 rev30d=$469,831 (2026-09-19)
+  "CHIP": "usd-ai"  # USD AI; gecko_id=chip-2; fees30d=$1,719,349 rev30d=$171,935 (2026-09-19)
+  "CLO": "parent#yei-finance"  # Yei Finance; gecko_id=yei-finance; fees30d=$1,778 rev30d=$587 (2026-09-19)
+  "COMP": "parent#compound-finance"  # Compound Finance; gecko_id=compound-governance-token; fees30d=$2,533,505 rev30d=$304,401 (2026-09-19)
+  "COW": "cowswap"  # CoWSwap; gecko_id=cow-protocol; fees30d=$1,948,838 rev30d=$1,267,837 (2026-09-19)
+  "CRV": "parent#curve-finance"  # Curve Finance; gecko_id=curve-dao-token; fees30d=$4,075,642 rev30d=$1,165,295 (2026-09-19)
+  "CVX": "convex-finance"  # Convex Finance; gecko_id=convex-finance; fees30d=$2,341,783 rev30d=$957,315 (2026-09-19)
+  "DEEP": "parent#deepbook"  # DeepBook; gecko_id=deep; fees30d=$58,964 rev30d=$43,552 (2026-09-19)
+  "DOLO": "dolomite"  # Dolomite; gecko_id=dolomite; fees30d=$1,143,201 rev30d=$228,665 (2026-09-19)
+  "DRIFT": "parent#drift"  # Drift; gecko_id=drift-protocol; fees30d=$1,179,426 rev30d=$29,855 (2026-09-19)
+  "DYDX": "parent#dydx"  # dYdX; gecko_id=dydx-chain; fees30d=$271,203 rev30d=$271,203 (2026-09-19)
+  "EDGE": "parent#edgex"  # edgeX; gecko_id=edgex; fees30d=$5,197,707 rev30d=$3,750,072 (2026-09-19)
+  "EIGEN": "eigencloud"  # EigenCloud; gecko_id=eigenlayer; fees30d=$246,503 rev30d=$0 (2026-09-19)
+  "ENA": "parent#ethena"  # Ethena; gecko_id=ethena; fees30d=$22,956,304 rev30d=$15,299 (2026-09-19)
+  "ENS": "ens"  # ENS; gecko_id=ethereum-name-service; fees30d=$299,740 rev30d=$299,740 (2026-09-19)
+  "ETHFI": "parent#ether-fi"  # ether.fi; gecko_id=ether-fi; fees30d=$13,797,462 rev30d=$3,650,967 (2026-09-19)
+  "EUL": "parent#euler"  # Euler; gecko_id=euler; fees30d=$1,184,334 rev30d=$45,093 (2026-09-19)
+  "F": "parent#synfutures"  # SynFutures; gecko_id=synfutures; fees30d=$242,022 rev30d=$242,022 (2026-09-19)
+  "FF": "falcon-finance"  # Falcon Finance; gecko_id=falcon-finance-ff; fees30d=$261,559 rev30d=$0 (2026-09-19)
+  "FIL": "filecoin"  # Filecoin; gecko_id=filecoin; fees30d=$72,942 rev30d=$72,942 (2026-09-19)
+  "FLOCK": "flock.io"  # FLock.io; gecko_id=flock-2; fees30d=$303 rev30d=$303 (2026-09-19)
+  "FLUID": "parent#fluid"  # Fluid; gecko_id=instadapp; fees30d=$3,758,470 rev30d=$558,049 (2026-09-19)
+  "FOLKS": "parent#folks-finance"  # Folks Finance; gecko_id=folks; fees30d=$63,280 rev30d=$7,973 (2026-09-19)
+  "G": "gravity-by-galxe"  # Gravity by Galxe; gecko_id=g-token; fees30d=$153 rev30d=$153 (2026-09-19)
+  "GMX": "parent#gmx"  # GMX; gecko_id=gmx; fees30d=$1,636,104 rev30d=$605,358 (2026-09-19)
+  "GPS": "parent#goplus-security"  # GoPlus Security; gecko_id=goplus-security; fees30d=$2,893 rev30d=$2,893 (2026-09-19)
+  "GRAM": "ton"  # TON; gecko_id=the-open-network; fees30d=$84,415 rev30d=$42,212 (2026-09-19)
+  "GRT": "the-graph"  # The Graph; gecko_id=the-graph; fees30d=$19,618 rev30d=$0 (2026-09-19)
+  "HAEDAL": "parent#haedal"  # Haedal; gecko_id=haedal; fees30d=$33,211 rev30d=$31,218 (2026-09-19)
+  "HOME": "parent#defi-app"  # Defi App; gecko_id=home; fees30d=$6,905 rev30d=$6,905 (2026-09-19)
+  "HYPE": "parent#hyperliquid"  # Hyperliquid; gecko_id=hyperliquid; fees30d=$82,254,307 rev30d=$64,339,681 (2026-09-19)
+  "HYPER": "hyperlane"  # Hyperlane; gecko_id=hyperlane; fees30d=$23,700 rev30d=$23,700 (2026-09-19)
+  "ILV": "illuvium"  # Illuvium; gecko_id=illuvium; fees30d=$2,787 rev30d=$2,787 (2026-09-19)
+  "INX": "parent#infinex"  # Infinex; gecko_id=infinex-2; fees30d=$43,118 rev30d=$43,118 (2026-09-19)
+  "JOE": "parent#trader-joe"  # LFJ; gecko_id=joe; fees30d=$83,545 rev30d=$8,401 (2026-09-19)
+  "JST": "parent#justlend"  # JustLend; gecko_id=just; fees30d=$1,656,102 rev30d=$47,479 (2026-09-19)
+  "JTO": "parent#jito"  # Jito; gecko_id=jito-governance-token; fees30d=$9,069,873 rev30d=$566,353 (2026-09-19)
+  "JUP": "parent#jupiter"  # Jupiter; gecko_id=jupiter-exchange-solana; fees30d=$20,648,867 rev30d=$7,409,325 (2026-09-19)
+  "KERNEL": "parent#kelp-dao"  # KernelDAO; gecko_id=kernel-2; fees30d=$2,534,621 rev30d=$109,346 (2026-09-19)
+  "KMNO": "parent#kamino-finance"  # Kamino; gecko_id=kamino; fees30d=$4,455,745 rev30d=$604,340 (2026-09-19)
+  "KNC": "parent#kyberswap"  # KyberSwap; gecko_id=kyber-network-crystal; fees30d=$928,157 rev30d=$928,157 (2026-09-19)
+  "LAB": "lab-terminal"  # LAB Terminal; gecko_id=lab; fees30d=$145,802 rev30d=n/a (2026-09-19)
+  "LAYER": "parent#solayer"  # Solayer; gecko_id=solayer; fees30d=$34,743 rev30d=$1,432 (2026-09-19)
+  "LDO": "lido"  # Lido; gecko_id=lido-dao; fees30d=$48,590,171 rev30d=$3,018,718 (2026-09-19)
+  "LINK": "parent#chainlink"  # Chainlink; gecko_id=chainlink; fees30d=$5,740,249 rev30d=$5,512,044 (2026-09-19)
+  "LISTA": "parent#lista-dao"  # Lista DAO; gecko_id=lista; fees30d=$1,372,367 rev30d=$672,189 (2026-09-19)
+  "LIT": "parent#lighter"  # Lighter; gecko_id=lighter; fees30d=$5,669,908 rev30d=$4,637,824 (2026-09-19)
+  "LPT": "livepeer"  # Livepeer; gecko_id=livepeer; fees30d=$90,155 rev30d=$90,155 (2026-09-19)
+  "LQTY": "parent#liquity"  # Liquity; gecko_id=liquity; fees30d=$168,332 rev30d=$37,473 (2026-09-19)
+  "LTC": "litecoin"  # Litecoin; gecko_id=litecoin; fees30d=$12,487 rev30d=n/a (2026-09-19)
+  "MAV": "parent#maverick-protocol"  # Maverick Protocol; gecko_id=maverick-protocol; fees30d=$17,478 rev30d=$0 (2026-09-19)
+  "MET": "parent#meteora"  # Meteora; gecko_id=meteora; fees30d=$26,059,164 rev30d=$3,054,944 (2026-09-19)
+  "METIS": "metis"  # Metis; gecko_id=metis-token; fees30d=$1,771 rev30d=n/a (2026-09-19)
+  "MMT": "momentum"  # Momentum; gecko_id=momentum-3; fees30d=$38,386 rev30d=$7,679 (2026-09-19)
+  "MON": "monad"  # Monad; gecko_id=monad; fees30d=$450,231 rev30d=$358,751 (2026-09-19)
+  "MORPHO": "parent#morpho"  # Morpho; gecko_id=morpho; fees30d=$14,876,018 rev30d=$0 (2026-09-19)
+  "MOVE": "movement"  # Movement; gecko_id=movement; fees30d=$9 rev30d=$9 (2026-09-19)
+  "NEAR": "parent#near-protocol"  # NEAR Protocol; gecko_id=near; fees30d=$5,903,031 rev30d=$1,350,637 (2026-09-19)
+  "O": "parent#o1-exchange"  # o1.exchange; gecko_id=o1-exchange; fees30d=$4,651,212 rev30d=$2,513,790 (2026-09-19)
+  "OGN": "parent#origin-defi"  # Origin Protocol; gecko_id=origin-protocol; fees30d=$256,935 rev30d=$51,386 (2026-09-19)
+  "ONDO": "parent#ondo-finance"  # Ondo Finance; gecko_id=ondo-finance; fees30d=$7,746,189 rev30d=$0 (2026-09-19)
+  "OP": "parent#optimism-foundation"  # Optimism Foundation; gecko_id=optimism; fees30d=$441,358 rev30d=$441,358 (2026-09-19)
+  "OPEN": "openledger"  # OpenLedger; gecko_id=openledger-2; fees30d=$38,239 rev30d=$38,239 (2026-09-19)
+  "OPN": "opinion"  # OPINION; gecko_id=opinion; fees30d=$43,013 rev30d=$42,998 (2026-09-19)
+  "ORCA": "parent#orca"  # Orca; gecko_id=orca; fees30d=$8,967,169 rev30d=$1,165,731 (2026-09-19)
+  "ORDER": "parent#orderly-network"  # Orderly; gecko_id=orderly-network; fees30d=$139,467 rev30d=n/a (2026-09-19)
+  "PENDLE": "parent#pendle"  # Pendle; gecko_id=pendle; fees30d=$628,924 rev30d=$618,326 (2026-09-19)
+  "PLUME": "plume-mainnet"  # Plume Mainnet; gecko_id=plume; fees30d=$2,030 rev30d=n/a (2026-09-19)
+  "PONS": "parent#pons"  # Pons; gecko_id=pons; fees30d=$135,487,898 rev30d=$23,913,862 (2026-09-19)
+  "PUMP": "parent#pump"  # Pump; gecko_id=pump-fun; fees30d=$159,881,769 rev30d=$55,093,682 (2026-09-19)
+  "PYTH": "parent#pyth"  # Pyth; gecko_id=pyth-network; fees30d=$724,454 rev30d=$434,293 (2026-09-19)
+  "RE": "re"  # Re; gecko_id=re; fees30d=$1,456,271 rev30d=$10,933 (2026-09-19)
+  "RENDER": "render-network-bme"  # Render Network BME; gecko_id=render-token; fees30d=$212,371 rev30d=$212,371 (2026-09-19)
+  "REZ": "renzo"  # Renzo; gecko_id=renzo; fees30d=$234,903 rev30d=$35,192 (2026-09-19)
+  "RIVER": "parent#river-inc"  # River; gecko_id=river; fees30d=$56 rev30d=$56 (2026-09-19)
+  "RPL": "rocket-pool"  # Rocket Pool; gecko_id=rocket-pool; fees30d=$2,931,742 rev30d=$0 (2026-09-19)
+  "RSR": "reserve-protocol"  # Reserve Protocol; gecko_id=reserve-rights-token; fees30d=$69,517 rev30d=$31,837 (2026-09-19)
+  "RUNE": "thorchain-dex"  # THORChain DEX; gecko_id=thorchain; fees30d=$1,445,354 rev30d=$184,098 (2026-09-19)
+  "S": "sonic"  # Sonic; gecko_id=sonic-3; fees30d=$3,518 rev30d=$3,518 (2026-09-19)
+  "SAFE": "safe"  # Safe; gecko_id=safe; fees30d=$53,526 rev30d=$53,526 (2026-09-19)
+  "SEI": "sei"  # Sei; gecko_id=sei-network; fees30d=$824 rev30d=$824 (2026-09-19)
+  "SKY": "parent#maker"  # Sky; gecko_id=sky; fees30d=$27,061,515 rev30d=$13,467,174 (2026-09-19)
+  "SLX": "solstice"  # Solstice; gecko_id=solstice; fees30d=$82,292 rev30d=$0 (2026-09-19)
+  "SNX": "parent#synthetix"  # Synthetix; gecko_id=havven; fees30d=$9,067 rev30d=$9,067 (2026-09-19)
+  "SOL": "solana"  # Solana; gecko_id=solana; fees30d=$23,330,009 rev30d=$2,573,296 (2026-09-19)
+  "SOLV": "parent#solv-protocol"  # Solv Protocol; gecko_id=solv-protocol; fees30d=$2,376,556 rev30d=$1,188,344 (2026-09-19)
+  "SPELL": "parent#abracadabra"  # Abracadabra; gecko_id=spell-token; fees30d=$2,573 rev30d=$2,566 (2026-09-19)
+  "SPK": "parent#spark"  # Spark; gecko_id=spark-2; fees30d=$12,232,056 rev30d=$-22,006 (2026-09-19)
+  "SSV": "ssv-network"  # SSV Network; gecko_id=ssv-network; fees30d=$292,395 rev30d=$287,902 (2026-09-19)
+  "STG": "parent#stargate-finance"  # Stargate Finance; gecko_id=stargate-finance; fees30d=$322,278 rev30d=$322,278 (2026-09-19)
+  "STO": "parent#stakestone"  # StakeStone; gecko_id=stakestone; fees30d=$29,637 rev30d=$0 (2026-09-19)
+  "SUI": "sui-foundation"  # Sui Foundation; gecko_id=sui; fees30d=$220,150 rev30d=$220,150 (2026-09-19)
+  "SUN": "parent#sun"  # SUN; gecko_id=sun-token; fees30d=$1,021,939 rev30d=$142,054 (2026-09-19)
+  "SUSHI": "parent#sushi"  # Sushi; gecko_id=sushi; fees30d=$710,767 rev30d=$309,757 (2026-09-19)
+  "SXT": "space-and-time"  # Space and Time; gecko_id=space-and-time; fees30d=$6,279 rev30d=$6,194 (2026-09-19)
+  "SYN": "parent#synapse"  # Synapse; gecko_id=synapse-2; fees30d=$1,199 rev30d=$1,198 (2026-09-19)
+  "SYRUP": "parent#maple-finance"  # Maple Finance; gecko_id=syrup; fees30d=$8,708,983 rev30d=$1,278,664 (2026-09-19)
+  "T": "parent#threshold-network"  # Threshold Network; gecko_id=threshold-network-token; fees30d=$44,034 rev30d=$44,034 (2026-09-19)
+  "THE": "parent#thena"  # THENA; gecko_id=thena; fees30d=$89,443 rev30d=$89,432 (2026-09-19)
+  "TIA": "celestia"  # Celestia; gecko_id=celestia; fees30d=$2,480 rev30d=$0 (2026-09-19)
+  "TREE": "tree-news"  # Tree News; gecko_id=tree-capital; fees30d=$79,931 rev30d=$79,931 (2026-09-19)
+  "TRIA": "parent#tria"  # TRIA; gecko_id=tria; fees30d=$31,557 rev30d=$31,557 (2026-09-19)
+  "TRX": "tron"  # Tron; gecko_id=tron; fees30d=$24,441,398 rev30d=$24,441,398 (2026-09-19)
+  "TWT": "parent#trust-wallet"  # Trust Wallet; gecko_id=trust-wallet-token; fees30d=$1,912,349 rev30d=$1,912,349 (2026-09-19)
+  "UNI": "parent#uniswap"  # Uniswap; gecko_id=uniswap; fees30d=$193,893,984 rev30d=$15,879,611 (2026-09-19)
+  "USUAL": "parent#usual"  # Usual; gecko_id=usual; fees30d=$338,784 rev30d=$330,488 (2026-09-19)
+  "VANA": "vana"  # Vana; gecko_id=vana; fees30d=$66 rev30d=n/a (2026-09-19)
+  "VIRTUAL": "virtuals-protocol"  # Virtuals Protocol; gecko_id=virtual-protocol; fees30d=$688,477 rev30d=$688,477 (2026-09-19)
+  "VVV": "venice"  # Venice; gecko_id=venice-token; fees30d=$797,709 rev30d=$797,709 (2026-09-19)
+  "W": "portal"  # Portal; gecko_id=wormhole; fees30d=$16,152 rev30d=$0 (2026-09-19)
+  "WAL": "walrus-protocol"  # Walrus Protocol; gecko_id=walrus-2; fees30d=$2,985 rev30d=$2,985 (2026-09-19)
+  "WET": "humidifi"  # HumidiFi; gecko_id=humidifi; fees30d=$388,773 rev30d=$388,773 (2026-09-19)
+  "WLFI": "world-liberty-financial"  # World Liberty Financial; gecko_id=world-liberty-financial; fees30d=$11,062,753 rev30d=$11,062,753 (2026-09-19)
+  "WOO": "parent#woofi"  # WOOFi; gecko_id=woo-network; fees30d=$19,409 rev30d=$18,713 (2026-09-19)
+  "XPL": "plasma"  # Plasma; gecko_id=plasma; fees30d=$14,830 rev30d=$14,830 (2026-09-19)
+  "XTZ": "tezos"  # Tezos; gecko_id=tezos; fees30d=$3,520 rev30d=$2,302 (2026-09-19)
+  "XVS": "parent#venus-finance"  # Venus; gecko_id=venus; fees30d=$1,237,997 rev30d=$503,312 (2026-09-19)
+  "YB": "yield-basis"  # Yield Basis; gecko_id=yield-basis; fees30d=$131,604 rev30d=$4,344 (2026-09-19)
+  "YFI": "parent#yearn"  # Yearn; gecko_id=yearn-finance; fees30d=$745,335 rev30d=$45,768 (2026-09-19)
+  "ZEST": "parent#zest"  # Zest; gecko_id=zest-protocol; fees30d=$15,225 rev30d=$6,986 (2026-09-19)
+  "ZETA": "zetachain"  # ZetaChain; gecko_id=zetachain; fees30d=$13 rev30d=n/a (2026-09-19)
+  "ZK": "zksync-era"  # zkSync Era; gecko_id=zksync; fees30d=$11,465 rev30d=$11,465 (2026-09-19)
+  "ZORA": "parent#zora"  # ZORA Protocol; gecko_id=zora; fees30d=$16,589 rev30d=$6,824 (2026-09-19)
+  "ZRO": "parent#layerzero"  # LayerZero; gecko_id=layerzero; fees30d=$238,946 rev30d=$191,090 (2026-09-19)

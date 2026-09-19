@@ -1933,3 +1933,161 @@ behaviour that made this failure legible in the first place.
 
 Three tests: no endpoint may name a geo-blocked host, both Binance hosts must be
 the website host, and no module may hardcode a blocked host behind the config.
+
+---
+
+## D-071 — The protocol map is verified by CoinGecko id, and parents sum their children
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+The fundamental block (weight 35, the largest) was scoring **9 of 158** ranked
+assets. Two causes, one of them a defect.
+
+**The defect.** DefiLlama lists only a parent protocol's *children*:
+`/protocols` and `/overview/fees` carry `aave-v3`, `aave-v2`, … each with
+`parentProtocol: "parent#aave"`, and no row called `aave`. Thirteen of the 28
+entries in `config/protocol_map.yaml` named a parent by its bare slug —
+aave, uniswap, pendle, ethena, gmx, raydium, pancakeswap, synthetix,
+compound-finance, makerdao, chainlink, balancer, 1inch-network — and matched
+nothing. The collector wrote `has_fundamentals = 0` for them without a word, so
+AAVE, UNI, CAKE and COMP scored the block None every day while looking mapped.
+Run against the old file, the new verifier reported **24 problems in 28 rows**:
+the 13 dead parents, 9 children mapped where the parent is the token's protocol
+(`curve-dex`, `aerodrome-v1`, `hyperliquid-perps`, …), and 2 slugs that are not
+DefiLlama protocols at all.
+
+**The fix.** A map value of the form `parent#<slug>` sums the parent's
+children — TVL (less any child DefiLlama marks `excludeTvlFromParent`) and each
+fees/revenue field, over the children that report it. A mapping that resolves
+to nothing now raises a warning (`defillama_mapping_unresolved`, run → partial)
+instead of scoring None in silence.
+
+**The map is generated, not hand-written.** `scripts/verify_protocol_map.py`
+applies one rule to every screened asset with a CoinGecko id:
+
+1. *Identity*: a DefiLlama entry whose `gecko_id` equals the asset's CoinGecko
+   id — the id the coingecko collector resolved, not the ticker, so a ticker
+   collision cannot attach another project's revenue. A child resolves to its
+   parent. In every accepted row DefiLlama's `symbol` also equals the ticker,
+   so this is strictly stronger than the check the file used to ask for.
+2. *Substance*: non-zero 30-day fees or revenue. A TVL-only entry would turn
+   the whole weight-35 block into a TVL rank — the weakest metric in it, and a
+   capital snapshot rather than activity — so it is not mapped.
+3. *No rival*: two live entries claiming one coin are skipped (FLOW: the Flow
+   chain and FlowSwap both cite `gecko_id: flow`).
+
+Result: **157 verified rows** (was 28, of which 4 worked), `--check` clean.
+Each row carries its evidence — name, gecko_id, 30-day fees and revenue, date.
+`--check` exits non-zero on any row that stops verifying; run it before
+hand-editing the file.
+
+**Chains are in.** Where DefiLlama attributes chain fees to a coin (BTC, SOL,
+TRX, ADA, AVAX, APT, …) the chain is the protocol. Price-to-sales across L1s
+and applications is how DefiLlama and Token Terminal present it; a chain with
+$9 of monthly fees simply ranks at the bottom of P/S, which is true.
+
+**Known gaps, not fixed here.** `active_addresses_24h` still has no writer, so
+that component is always None. And the renormalisation inside the block means
+an asset with only fee data is scored on fees alone; see the active-screener
+plan for the coverage fix that applies to every block.
+
+---
+
+## D-072 — Net issuance replaces three supply metrics that had no writer
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+`score_supply` read five inputs. Three — `emissions_trajectory`,
+`burned_pct_of_total`, `staked_ratio` — came from `supply_metrics`, and **no
+collector ever wrote that table**. It was created, backed up, migrated and read
+every morning, and it was always empty. The block therefore reduced to the
+float ratio (circulating / total), on which the 36 fully-circulating survivors
+tie at exactly 84.49, plus a days-since-unlock figure 19 of 158 assets had.
+The metrics still appeared in every asset's published `percentiles` as nulls,
+which reads as "measured, unavailable today" rather than "never built".
+
+**What replaces them.** Net issuance: circulating-supply growth over the last
+90 days, annualised, from CoinGecko's own supply history; and its trajectory
+(falling / flat / rising against the previous 90 days, ±2 points).
+
+- *Why circulating growth and not a schedule.* DefiLlama's emissions datasets
+  end at their last documented day, so an open-ended inflation (RPL, ~5%/yr)
+  reads as zero future emission; its `burned` series exists for a handful of
+  tokens (BNB yes, CAKE no). Measured circulating supply covers every asset
+  CoinGecko prices, and it is **net**: a burn is negative issuance, so burned
+  share needs no metric of its own. Staked share has no reliable free source
+  at all.
+- *The source.* `/coins/{id}/market_chart?interval=daily` gives market cap and
+  price at 00:00 UTC; their ratio reproduces the `circulating_supply` CoinGecko
+  reports on `/coins/markets` (RPL identical to every digit, BNB within
+  0.001%, 2026-09-19). So each asset is backfilled once, 365 days in one call,
+  into `supply_history`, and extended every day from the `market_snapshot` row
+  the coingecko collector already wrote — the same measurement, at no API cost.
+  `supply_backfill` records which id each asset was backfilled from; a changed
+  id is a different coin and is backfilled again, and every backfill is
+  refreshed after 30 days to heal any day the extension missed.
+- *Noise.* CoinGecko revises a figure and reverts it a day later often enough
+  to matter (CAKE 2026-02-11: +17.8%, −15.1% next day). Each end of a window is
+  a 7-day median, never a single reading. A revision that sticks is scored as
+  issuance, which is usually what it is.
+
+Live dry run on 2026-09-19 (no write): BTC **+0.83%/yr** — the post-halving
+issuance rate — BNB −4.8% (burns), XRP +5.5% (escrow releases), trajectory
+flat for all three.
+
+**Weights inside the block:** net issuance 3.0, trajectory 1.5, days since
+the last major unlock 2.0, float ratio 1.5; the overhang-cleared bonus is
+unchanged. `burned_pct` and `staked_ratio` are removed from scoring and from
+the published percentiles. Their columns stay in the schema, commented as
+unpopulated, because a column cannot be dropped everywhere this runs.
+
+**Where it runs.** Last in the `supply` tier, after `asset_contracts`, so the
+two never share CoinGecko's per-minute budget. 150 backfills per run at
+10/min is ~15 minutes inside the supply job's 90; the screened universe is
+covered in about four runs, yesterday's survivors first. Steady state is ~18
+calls a day. The supply steps now receive `COINGECKO_API_KEY`: keyless, a
+runner's shared IP is throttled far below 10/min.
+
+**Journal consequence.** Scores change method on the day this deploys. The
+journal is four days old, so the break costs almost nothing now and more every
+day it waits; it should be recorded against the run date it lands on.
+
+---
+
+## D-073 — Sectors come from CoinGecko categories, by a fixed precedence
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+69 of the 158 ranked survivors were `unclassified`, including eight of the
+top ten (ONT, KAVA, MINA, THETA, HOT, CHZ, LPT, MASK, XEC). Their sector block
+scored None and its weight went to supply and drawdown, which is half of why
+the same fully-circulating, far-below-ATH coins led every day.
+
+**Source.** CoinGecko's own category membership, read in bulk from
+`/coins/markets?category=<id>`: about 45 calls for 31 categories, instead of
+one per coin. Keyless per-coin lookups ran at about one a minute under
+CoinGecko's throttle; the bulk read finished in minutes.
+
+**Rule** (`scripts/propose_sectors.py`, repeatable): an asset takes the first
+of the eleven curated sectors whose categories it belongs to, most specific
+first — memecoin, privacy, exchange (**CEX tokens only**: CoinGecko's
+exchange-based list includes DEX tokens such as BNT and ZRX), oracle →
+infrastructure (TRB, RED, UMA carry DeFi or RWA tags too), rwa, depin,
+gaming, ai, defi, l2, an explicit Layer 1 tag, generic infrastructure, then
+smart-contract-platform / bitcoin-fork / payments → l1.
+
+**Four overrides**, each choosing between labels CoinGecko itself gives the
+coin, with the reason inline in the YAML: RVN, ASTR, LUNC and ONE go to `l1`
+(base chains CoinGecko also tags RWA, L2, DeFi or gaming). The script refuses
+an override onto a category CoinGecko does not list.
+
+**No new sectors.** Fan tokens (CHZ's peers SANTOS, OG, ASR, FIGHT, ALPINE)
+and SocialFi (STEEM, HIVE) would each form a sector that almost never indexes:
+one fan token and one SocialFi coin survived on 2026-09-19, against
+`min_members_for_index: 3`. CHZ therefore takes its CoinGecko Layer 1 tag.
+
+**Result:** 312 screened assets gained a sector. 53 stay unclassified because
+CoinGecko gives them no category in this taxonomy — **MASK among them**
+(ecosystem and portfolio tags only), plus BAT, ENS, SYN, EDU, USDC and the
+fan tokens. That is the file's own rule working: a null is honest, a guess is
+not. Existing curated rows were not touched.

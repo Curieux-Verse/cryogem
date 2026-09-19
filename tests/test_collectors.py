@@ -452,6 +452,11 @@ class TestDefiLlamaMapping:
         )
         db.commit()
         collector = DefiLlamaCollector()
+        # The live map is regenerated from DefiLlama (D-071); pin the mapping
+        # this fixture was written for rather than depend on the file.
+        monkeypatch.setattr(
+            "src.collectors.defillama.load_protocol_map", lambda _root: {"AERO": "aerodrome-v1"}
+        )
         monkeypatch.setattr(collector, "_universe_assets", lambda: ["AERO", "TAO"])
         rows = {r["base_asset"]: r for r in collector.transform(self._raw(), AS_OF)}
 
@@ -468,6 +473,94 @@ class TestDefiLlamaMapping:
         # redistribute its weight, not score it a genuine-looking zero.
         assert row["revenue_30d_usd"] is None
         assert row["tvl_usd"] is None
+
+
+class TestDefiLlamaParentProtocols:
+    """D-071: a parent id sums its children, and a dead mapping is reported.
+
+    DefiLlama lists `aave-v3` and `aave-v2` with parentProtocol "parent#aave"
+    and has no row for `aave`. Thirteen parents were mapped by bare slug and
+    matched nothing for a week, silently.
+    """
+
+    RAW = {
+        "protocols": [
+            {"slug": "aave-v3", "tvl": 100.0, "parentProtocol": "parent#aave"},
+            {"slug": "aave-v2", "tvl": 20.0, "parentProtocol": "parent#aave"},
+            # DefiLlama keeps some children's TVL out of the parent's total.
+            {"slug": "aave-gho", "tvl": 999.0, "parentProtocol": "parent#aave",
+             "excludeTvlFromParent": True},
+            {"slug": "lido", "tvl": 50.0},
+        ],
+        "fees": {"protocols": [
+            {"slug": "aave-v3", "parentProtocol": "parent#aave",
+             "total24h": 1.0, "total7d": 7.0, "total30d": 30.0, "total60dto30d": 25.0},
+            # Launched this month: no 60-to-30-day figure yet.
+            {"slug": "aave-v4", "parentProtocol": "parent#aave",
+             "total24h": 0.5, "total7d": 3.5, "total30d": 5.0, "total60dto30d": None},
+            {"slug": "lido", "total24h": 2.0, "total7d": 14.0, "total30d": 60.0},
+        ]},
+        "revenue": {"protocols": [
+            {"slug": "aave-v3", "parentProtocol": "parent#aave",
+             "total24h": 0.1, "total7d": 0.7, "total30d": 3.0, "total60dto30d": 2.0},
+        ]},
+    }
+
+    def _rows(self, monkeypatch, mapping, assets):
+        collector = DefiLlamaCollector()
+        monkeypatch.setattr("src.collectors.defillama.load_protocol_map", lambda _root: mapping)
+        monkeypatch.setattr(collector, "_universe_assets", lambda: assets)
+        return collector, {r["base_asset"]: r for r in collector.transform(self.RAW, AS_OF)}
+
+    def test_parent_sums_its_children(self, monkeypatch):
+        _, rows = self._rows(monkeypatch, {"AAVE": "parent#aave"}, ["AAVE"])
+        aave = rows["AAVE"]
+        assert aave["has_fundamentals"] == 1
+        assert aave["tvl_usd"] == 120.0          # the excluded child is not counted
+        assert aave["fees_30d_usd"] == 35.0
+        assert aave["fees_7d_usd"] == 10.5
+        assert aave["revenue_30d_usd"] == 3.0
+        assert aave["revenue_prev_30d_usd"] == 2.0
+
+    def test_a_missing_field_is_skipped_not_zeroed(self):
+        from src.collectors.defillama import sum_overview
+
+        summed = sum_overview([{"total30d": None}, {"total30d": None}])
+        assert summed["total30d"] is None
+
+    def test_a_bare_parent_slug_matches_nothing_and_is_reported(self, monkeypatch):
+        collector, rows = self._rows(monkeypatch, {"AAVE": "aave"}, ["AAVE"])
+        assert rows["AAVE"]["has_fundamentals"] == 0
+        assert "defillama_mapping_unresolved" in collector._warnings
+
+    def test_plain_slugs_still_resolve(self, monkeypatch):
+        _, rows = self._rows(monkeypatch, {"LDO": "lido"}, ["LDO"])
+        assert rows["LDO"]["fees_30d_usd"] == 60.0
+        assert rows["LDO"]["tvl_usd"] == 50.0
+
+
+class TestProtocolMapFile:
+    """The committed map must be loadable and in the collector's vocabulary."""
+
+    def test_every_value_is_a_slug_or_a_parent_id(self):
+        from src.collectors.defillama import PARENT_PREFIX, load_protocol_map
+        from src.config import REPO_ROOT
+
+        mapping = load_protocol_map(REPO_ROOT)
+        assert len(mapping) >= 100, "the verified map regressed to a handful of rows"
+        for asset, value in mapping.items():
+            assert value and value == value.strip(), asset
+            assert " " not in value, f"{asset}: {value!r} is not a slug"
+            if value.startswith(PARENT_PREFIX):
+                assert len(value) > len(PARENT_PREFIX), asset
+
+    def test_the_thirteen_dead_parents_are_parents_now(self):
+        from src.collectors.defillama import load_protocol_map
+        from src.config import REPO_ROOT
+
+        mapping = load_protocol_map(REPO_ROOT)
+        for asset in ("AAVE", "UNI", "PENDLE", "ENA", "CAKE", "COMP", "LINK", "1INCH"):
+            assert mapping[asset].startswith("parent#"), f"{asset} -> {mapping[asset]}"
 
 
 class TestBinanceHostsAvoidTheGeoBlock:

@@ -78,6 +78,19 @@ layer2:
   # TUNE_ME: any block-score pair above this |rho| is measuring one thing twice.
   redundancy_corr_threshold: 0.8
   redundancy_min_days: 30
+  # D-072: net issuance = circulating-supply growth over this many days,
+  # annualised, from CoinGecko's own supply history. 90 days spans a quarter of
+  # monthly cliffs without being dominated by one of them.
+  supply_growth_window_days: 90
+  # Each end of the window is the MEDIAN of this many daily readings: CoinGecko
+  # revises a supply figure and reverts it a day later often enough that a
+  # single-day endpoint reads noise as issuance (CAKE, 2026-02-11: +17.8%, then
+  # -15.1% the next day).
+  supply_smoothing_days: 7
+  # TUNE_ME: annualised growth has to move by more than this (absolute, 0.02 =
+  # 2 percentage points) between consecutive windows to read as falling or
+  # rising rather than flat.
+  emissions_trajectory_tolerance: 0.02
 
 layer3:
   funding_negative_extreme_pctile: 5.0

@@ -160,14 +160,25 @@ CREATE INDEX IF NOT EXISTS idx_holder_asset_date
     ON holder_snapshot(base_asset, snapshot_date);
 
 -- =============================================================================
--- SUPPLY METRICS: emissions + burns, feeding the L2 supply block.
+-- SUPPLY METRICS: net issuance, feeding the L2 supply block (D-072).
+--
+-- Written by the supply_history collector from CoinGecko's circulating-supply
+-- history. emissions_annual is NET issuance -- circulating growth over the
+-- window, annualised -- so a burn shows up as a negative number rather than
+-- needing a column of its own.
+--
+-- NOT POPULATED, and deliberately not read by the scoring layer:
+-- cumulative_burned, burned_pct_of_total, staked_ratio,
+-- staked_is_team_controlled. No free source measures them reliably, and for a
+-- week they sat in the supply block as permanent NULLs that looked like
+-- metrics. Kept only because SQLite cannot drop a column everywhere this runs.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS supply_metrics (
     snapshot_date       TEXT NOT NULL,
     base_asset          TEXT NOT NULL,
-    emissions_annual    REAL,
-    emissions_prev_annual REAL,
-    emissions_trajectory TEXT,
+    emissions_annual    REAL,               -- net circulating growth, latest window, annualised
+    emissions_prev_annual REAL,             -- the same, for the window before it
+    emissions_trajectory TEXT,              -- falling | flat | rising
     cumulative_burned   REAL,
     burned_pct_of_total REAL,
     staked_ratio        REAL,
@@ -178,6 +189,33 @@ CREATE TABLE IF NOT EXISTS supply_metrics (
 );
 CREATE INDEX IF NOT EXISTS idx_supply_asset_date
     ON supply_metrics(base_asset, snapshot_date);
+
+-- Circulating supply by day, per asset: CoinGecko's own history, backfilled
+-- once from /market_chart (market cap / price at 00:00 UTC, which reproduces
+-- CoinGecko's reported circulating_supply) and extended daily from
+-- market_snapshot at no API cost (D-072).
+CREATE TABLE IF NOT EXISTS supply_history (
+    snapshot_date       TEXT NOT NULL,
+    base_asset          TEXT NOT NULL,
+    coingecko_id        TEXT,
+    circulating_supply  REAL NOT NULL,
+    source              TEXT NOT NULL,      -- coingecko_market_chart | coingecko_markets
+    fetched_at_utc      TEXT NOT NULL,
+    PRIMARY KEY (snapshot_date, base_asset)
+);
+CREATE INDEX IF NOT EXISTS idx_supply_history_asset_date
+    ON supply_history(base_asset, snapshot_date);
+
+-- Which assets have had their history backfilled, and from which CoinGecko id.
+-- One row per asset: the planner reads this instead of scanning supply_history,
+-- because Turso meters rows read.
+CREATE TABLE IF NOT EXISTS supply_backfill (
+    base_asset          TEXT PRIMARY KEY,
+    coingecko_id        TEXT NOT NULL,
+    days_returned       INTEGER,
+    backfilled_utc      TEXT NOT NULL,
+    fetched_at_utc      TEXT NOT NULL
+);
 
 -- =============================================================================
 -- LIQUIDATIONS. NOTE: all totals are FLOORS, not measurements. Feeds are

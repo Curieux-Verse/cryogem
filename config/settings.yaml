@@ -144,6 +144,22 @@ holders:
     - "masterchef"
   excluded_addresses_file: "config/excluded_addresses.yaml"
 
+# ------------------------------------------------------------------------------
+# SUPPLY HISTORY (D-072). Circulating supply per day, for net issuance in the L2
+# supply block. Each asset is backfilled from CoinGecko /market_chart ONCE, then
+# extended every day from market_snapshot for free. Runs in the supply job, after
+# asset_contracts, so the two never compete for CoinGecko's rate limit.
+# ------------------------------------------------------------------------------
+supply_history:
+  # One call per asset. At rate_limits.coingecko (10/min) this is ~15 minutes;
+  # the whole screened universe is covered in about four runs, survivors first.
+  max_fetches_per_run: 150
+  # Re-backfill after this many days, which heals gaps left by a missed daily
+  # collection. ~18 calls a day across the universe in steady state.
+  refresh_days: 30
+  # The Demo plan serves 365 days of history; two 90-day windows need ~187.
+  history_days: 365
+
 contracts:
   # CoinGecko /coins/{id} lookups confirming the origin chain of a multi-chain
   # token. 10/min on the free tier, so bounded; the rest wait for the next run.

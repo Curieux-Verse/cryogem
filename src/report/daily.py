@@ -326,8 +326,8 @@ def _coverage(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
         (
             "supply_metrics",
             "t.snapshot_date = ?",
-            "t.emissions_annual IS NOT NULL OR t.staked_ratio IS NOT NULL "
-            "OR t.burned_pct_of_total IS NOT NULL",
+            # Net issuance is the only supply metric with a writer (D-072).
+            "t.emissions_annual IS NOT NULL",
         ),
         ("attention_snapshot", "t.snapshot_date = ?", "t.social_volume IS NOT NULL"),
     )

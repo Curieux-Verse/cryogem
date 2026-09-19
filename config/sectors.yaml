@@ -5,6 +5,12 @@
 # highly. An asset absent from this map gets sector = "unclassified", its sector
 # block scores None, and the weight is renormalised over the remaining blocks.
 # Never guess a mapping to avoid a null — a null is honest, a guess is not.
+#
+# Rows under "From CoinGecko categories" were added by scripts/propose_sectors.py
+# (D-073): each asset takes the first sector whose CoinGecko categories it is a
+# member of, in a fixed precedence, with every override's reason inline. An
+# asset CoinGecko gives no category in this taxonomy (MASK, fan tokens, wallet
+# tokens) stays unclassified rather than guessed.
 
 sectors:
   ai:
@@ -22,6 +28,61 @@ sectors:
     - PHB
     - AI
     - VVV
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "0G"
+    - "AIA"
+    - "AIN"
+    - "AIO"
+    - "AIOT"
+    - "AKE"
+    - "ALCH"
+    - "ALLO"
+    - "ARC"
+    - "AWE"
+    - "BLUAI"
+    - "C"
+    - "CGPT"
+    - "CLANKER"
+    - "COAI"
+    - "COOKIE"
+    - "DOS"
+    - "ELSA"
+    - "FHE"
+    - "FLOCK"
+    - "HOLO"
+    - "IN"
+    - "KAITO"
+    - "KITE"
+    - "LA"
+    - "LYN"
+    - "MIRA"
+    - "NEWT"
+    - "NIL"
+    - "OPEN"
+    - "OPG"
+    - "PIEVERSE"
+    - "PRL"
+    - "PROMPT"
+    - "Q"
+    - "RECALL"
+    - "ROBO"
+    - "SAGA"
+    - "SAHARA"
+    - "SAPIEN"
+    - "SENT"
+    - "SHELL"
+    - "SQD"
+    - "SWARMS"
+    - "TA"
+    - "TAG"
+    - "TRUTH"
+    - "UAI"
+    - "UB"
+    - "US"
+    - "VANA"
+    - "VELVET"
+    - "VIRTUAL"
+    - "XNY"
   defi:
     - UNI
     - AAVE
@@ -51,6 +112,93 @@ sectors:
     - RUNE
     - OSMO
     - HYPE
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "AEVO"
+    - "APR"
+    - "ASTER"
+    - "AUCTION"
+    - "AVNT"
+    - "BABY"
+    - "BANK"
+    - "BARD"
+    - "BASED"
+    - "BEL"
+    - "BNT"
+    - "BR"
+    - "BSB"
+    - "BTW"
+    - "C98"
+    - "CAP"
+    - "CETUS"
+    - "CHIP"
+    - "CLO"
+    - "COW"
+    - "CVX"
+    - "DEEP"
+    - "DEXE"
+    - "DOLO"
+    - "DRIFT"
+    - "EDGE"
+    - "EUL"
+    - "EVAA"
+    - "F"
+    - "FF"
+    - "FIDA"
+    - "FLUID"
+    - "FOGO"
+    - "FOLKS"
+    - "FRAX"
+    - "GENIUS"
+    - "GRVT"
+    - "GWEI"
+    - "HAEDAL"
+    - "HOME"
+    - "HUMA"
+    - "INX"
+    - "JOE"
+    - "JST"
+    - "KAT"
+    - "KMNO"
+    - "KNC"
+    - "LAB"
+    - "LAYER"
+    - "LISTA"
+    - "LIT"
+    - "LQTY"
+    - "MAGMA"
+    - "MET"
+    - "MITO"
+    - "MMT"
+    - "MYX"
+    - "NOM"
+    - "O"
+    - "OGN"
+    - "ORCA"
+    - "ORDER"
+    - "PARTI"
+    - "PUNDIX"
+    - "RESOLV"
+    - "REZ"
+    - "RPL"
+    - "SLX"
+    - "SPELL"
+    - "SPK"
+    - "SSV"
+    - "STG"
+    - "STO"
+    - "SUN"
+    - "T"
+    - "THE"
+    - "TRADOOR"
+    - "TRIA"
+    - "TURTLE"
+    - "WET"
+    - "XVS"
+    - "YB"
+    - "YFI"
+    - "ZBT"
+    - "ZEST"
+    - "ZRX"
   depin:
     - HNT
     - IOTX
@@ -61,6 +209,22 @@ sectors:
     - GRASS
     - IO
     - ATH
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "ACU"
+    - "BLESS"
+    - "FLUX"
+    - "GLM"
+    - "HOT"
+    - "ICNT"
+    - "IOTA"
+    - "JASMY"
+    - "JCT"
+    - "LPT"
+    - "POWR"
+    - "SPACE"
+    - "THETA"
+    - "WAL"
+    - "XPIN"
   rwa:
     - ONDO
     - POLYX
@@ -69,6 +233,19 @@ sectors:
     - OM
     - PLUME
     - USUAL
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "CHR"
+    - "COLLECT"
+    - "EDEN"
+    - "EPIC"
+    - "KERNEL"
+    - "LUMIA"
+    - "MANTRA"
+    - "RE"
+    - "RSR"
+    - "STBL"
+    - "SYRUP"
+    - "XAUT"
   gaming:
     - IMX
     - GALA
@@ -85,6 +262,29 @@ sectors:
     - YGG
     - MAGIC
     - ILV
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "ACE"
+    - "ALICE"
+    - "ARIA"
+    - "BEAT"
+    - "CARV"
+    - "CATI"
+    - "GMT"
+    - "GUN"
+    - "HMSTR"
+    - "MAVIA"
+    - "MOCA"
+    - "NXPC"
+    - "PLAY"
+    - "PORTAL"
+    - "POWER"
+    - "SLP"
+    - "SONIC"
+    - "SUPER"
+    - "TAKE"
+    - "TLM"
+    - "WAXP"
+    - "XAI"
   l1:
     - BTC
     - ETH
@@ -120,6 +320,49 @@ sectors:
     - FLOW
     - KAIA
     - VET
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "A"
+    - "ARK"
+    - "ASTR"  # override: Polkadot parachain beside DOT/KSM; the L2 tag is Astar zkEVM
+    - "BSV"
+    - "BTR"
+    - "CC"
+    - "CFX"
+    - "CHZ"
+    - "DYM"
+    - "ETHW"
+    - "G"
+    - "GRAM"
+    - "HEMI"
+    - "HIVE"
+    - "INIT"
+    - "IOST"
+    - "IRYS"
+    - "KAVA"
+    - "KSM"
+    - "LUNC"  # override: Terra Classic's native chain token; the DeFi tag is historical
+    - "MINA"
+    - "MON"
+    - "MOVR"
+    - "NEO"
+    - "NIGHT"
+    - "ONE"  # override: Harmony's base-layer token; the gaming tag is ecosystem
+    - "ONG"
+    - "ONT"
+    - "QTUM"
+    - "RVN"  # override: PoW base chain; its RWA tag is for the asset-issuance feature
+    - "SIGN"
+    - "SOMI"
+    - "STABLE"
+    - "SXT"
+    - "VTHO"
+    - "XEC"
+    - "XPL"
+    - "XTZ"
+    - "ZEN"
+    - "ZETA"
+    - "ZIL"
+    - "ZKC"
   l2:
     - ARB
     - OP
@@ -137,6 +380,25 @@ sectors:
     - SKL
     - CYBER
     - FORM
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "ALT"
+    - "AZTEC"
+    - "B2"
+    - "CKB"
+    - "COTI"
+    - "CTR"
+    - "CTSI"
+    - "LINEA"
+    - "LSK"
+    - "MEGA"
+    - "MERL"
+    - "MTL"
+    - "PROM"
+    - "SOON"
+    - "SOPH"
+    - "STX"
+    - "TOWNS"
+    - "ZORA"
   privacy:
     - XMR
     - ZEC
@@ -144,6 +406,8 @@ sectors:
     - SCRT
     - ROSE
     - DUSK
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "XVG"
   memecoin:
     - DOGE
     - SHIB
@@ -167,6 +431,43 @@ sectors:
     - SPX
     - TRUMP
     - MELANIA
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "4"
+    - "AIXBT"
+    - "ANIME"
+    - "B"
+    - "BABYDOGE"
+    - "BAN"
+    - "BANANAS31"
+    - "BIRB"
+    - "BULLA"
+    - "CAT"
+    - "CHEEMS"
+    - "DOGS"
+    - "GIGGLE"
+    - "GRIFFAIN"
+    - "KOMA"
+    - "M"
+    - "MARSCOIN"
+    - "MOG"
+    - "MUBARAK"
+    - "NOT"
+    - "ORDI"
+    - "PENGU"
+    - "PEOPLE"
+    - "PIPPIN"
+    - "PUMP"
+    - "SIREN"
+    - "TOSHI"
+    - "TST"
+    - "TUT"
+    - "USELESS"
+    - "ZEREBRO"
+    - "哈基米"
+    - "币安人生"
+    - "我踏马来了"
+    - "牛来"
+    - "龙虾"
   infrastructure:
     - LINK
     - PYTH
@@ -179,6 +480,32 @@ sectors:
     - CELR
     - ANKR
     - POKT
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "2Z"
+    - "AT"
+    - "BICO"
+    - "BREV"
+    - "CYS"
+    - "DIA"
+    - "ENSO"
+    - "ESP"
+    - "GAS"
+    - "H"
+    - "HYPER"
+    - "LIGHT"
+    - "NAORIS"
+    - "ON"
+    - "PHA"
+    - "PROVE"
+    - "RED"
+    - "RLC"
+    - "SAFE"
+    - "SKR"
+    - "TAC"
+    - "TRB"
+    - "UMA"
+    - "XAN"
+    - "ZKP"
   exchange:
     - BNB
     - OKB
@@ -186,6 +513,8 @@ sectors:
     - KCS
     - GT
     - MX
+    # From CoinGecko categories, 2026-09-19 (D-073; scripts/propose_sectors.py)
+    - "WOO"
 
 # Sector index construction:
 #   - equal-weight the daily returns of every mapped, L1-surviving member

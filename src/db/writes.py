@@ -36,6 +36,8 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "fundamentals_snapshot": ("snapshot_date", "base_asset"),
     "holder_snapshot": ("snapshot_date", "base_asset"),
     "supply_metrics": ("snapshot_date", "base_asset"),
+    "supply_history": ("snapshot_date", "base_asset"),
+    "supply_backfill": ("base_asset",),
     "liquidation_snapshot": ("snapshot_date", "exchange", "symbol"),
     "scheduled_event": ("event_id",),
     "attention_snapshot": ("snapshot_date", "base_asset", "source"),

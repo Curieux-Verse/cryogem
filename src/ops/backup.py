@@ -41,6 +41,8 @@ TABLE_ORDER = (
     "fundamentals_snapshot",
     "holder_snapshot",
     "supply_metrics",
+    "supply_history",
+    "supply_backfill",
     "attention_snapshot",
     "market_regime",
     "spot_snapshot",

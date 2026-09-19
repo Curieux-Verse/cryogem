@@ -142,37 +142,40 @@ class Layer2Scorer:
         return scores, metrics
 
     def score_supply(self, df: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
-        """Emissions direction, burn, and distance from the last cliff. Weight 25.
+        """Net issuance, its direction, float, and distance from the last cliff. Weight 25.
 
         Reference case: VVV cut emissions 10M -> 8M -> 6M -> 3M -> 2.5M -> 2M
-        per year while burning ~33.87M tokens, about 41.85% of total supply.
+        per year while burning ~33.87M tokens, about 41.85% of total supply --
+        which is low NET issuance, falling. Both halves are measured here.
+
+        D-072. `net_issuance` is circulating-supply growth over the last window,
+        annualised, from CoinGecko's own supply history: a burn is negative
+        issuance, so burned share needs no metric of its own. Burned and staked
+        share were metrics here with no writer anywhere -- permanently None,
+        listed beside real ones -- and are gone rather than left looking live.
         """
         metrics: dict[str, pd.Series] = {}
 
-        trajectory_score = df["emissions_trajectory"].map(
+        # LOWER is better: supply growing more slowly than the universe's.
+        metrics["net_issuance"] = cross_sectional_percentile(
+            df["emissions_annual"], higher_is_better=False
+        )
+        metrics["emissions_trajectory"] = df["emissions_trajectory"].map(
             {"falling": 100.0, "flat": 50.0, "rising": 0.0}
         )
-        metrics["emissions_trajectory"] = trajectory_score
-        metrics["burned_pct"] = cross_sectional_percentile(df["burned_pct_of_total"])
         metrics["days_since_unlock"] = cross_sectional_percentile(df["days_since_last_major_unlock"])
         metrics["float_ratio"] = cross_sectional_percentile(
             df["circulating_supply"] / df["total_supply"].replace(0, np.nan)
         )
 
-        # Staked supply reduces effective float -- but only if it is not the
-        # team's own stake, which reduces nothing and hides concentration.
-        staked = df["staked_ratio"].where(df["staked_is_team_controlled"] != 1)
-        metrics["staked_ratio"] = cross_sectional_percentile(staked)
-
         scores = self._combine(
             df.index,
             metrics,
             {
-                "emissions_trajectory": 3.0,
-                "burned_pct": 2.0,
+                "net_issuance": 3.0,
+                "emissions_trajectory": 1.5,
                 "days_since_unlock": 2.0,
                 "float_ratio": 1.5,
-                "staked_ratio": 1.0,
             },
         )
 
@@ -410,10 +413,7 @@ def load_scoring_frame(db: Database, run_date: str, survivors: list[str]) -> pd.
         "tvl_usd, fees_7d_usd, fees_30d_usd, revenue_30d_usd, revenue_prev_30d_usd, "
         "revenue_annualised, active_addresses_24h, has_fundamentals",
     )
-    supply = latest(
-        "supply_metrics",
-        "emissions_trajectory, burned_pct_of_total, staked_ratio, staked_is_team_controlled",
-    )
+    supply = latest("supply_metrics", "emissions_annual, emissions_trajectory")
     attention = latest("attention_snapshot", "social_volume_z, social_dominance")
 
     df = pd.DataFrame(index=pd.Index(survivors, name="base_asset"))
@@ -450,8 +450,7 @@ def load_scoring_frame(db: Database, run_date: str, survivors: list[str]) -> pd.
     for column in (
         "has_fundamentals", "tvl_usd", "fees_7d_usd", "fees_30d_usd", "revenue_30d_usd",
         "revenue_prev_30d_usd", "revenue_annualised", "active_addresses_24h",
-        "emissions_trajectory", "burned_pct_of_total", "staked_ratio",
-        "staked_is_team_controlled", "social_volume_z", "social_dominance",
+        "emissions_annual", "emissions_trajectory", "social_volume_z", "social_dominance",
         "market_cap_usd", "circulating_supply", "total_supply", "pct_below_ath",
     ):
         if column not in df.columns:

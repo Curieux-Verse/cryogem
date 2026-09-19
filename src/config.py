@@ -144,6 +144,10 @@ class Layer2Thresholds(BaseModel):
     unlock_overhang_cleared_bonus: float
     redundancy_corr_threshold: float
     redundancy_min_days: int
+    # Net issuance in the supply block (D-072).
+    supply_growth_window_days: int
+    supply_smoothing_days: int
+    emissions_trajectory_tolerance: float
 
 
 class Layer3Thresholds(BaseModel):
@@ -272,6 +276,16 @@ class HolderSettings(BaseModel):
     excluded_addresses_file: str
 
 
+# Circulating-supply history for net issuance. See DECISIONS.md D-072.
+class SupplyHistorySettings(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    max_fetches_per_run: int
+    # Re-backfill an asset after this many days, healing any gap in the series.
+    refresh_days: int
+    history_days: int
+
+
 class ContractSettings(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -310,6 +324,7 @@ class Settings(BaseModel):
     holders: HolderSettings
     contracts: ContractSettings
     unlocks: UnlockSettings
+    supply_history: SupplyHistorySettings
 
 
 # ==============================================================================

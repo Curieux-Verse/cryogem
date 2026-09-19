@@ -83,6 +83,8 @@ cd web && npm install && npm run dev
 | `backtest --start --end` | Refuses until ~6 months of recorded days exist. |
 | `doctor` | Checks config, database and data freshness. |
 
+Two operator scripts keep the hand-maintained maps honest: `scripts/verify_protocol_map.py --check` fails on any DefiLlama mapping whose CoinGecko id no longer matches (D-071), and `scripts/propose_sectors.py` proposes sectors from CoinGecko categories (D-073).
+
 ## How it stays running
 
 Every workflow is `workflow_dispatch` only. **There is no `on: schedule`
@@ -106,6 +108,7 @@ including two deliberate break tests.
 | [docs/API_DEVIATIONS.md](docs/API_DEVIATIONS.md) | Where the APIs differ from their documentation. |
 | [docs/RESEARCH_LOG.md](docs/RESEARCH_LOG.md) | Open questions and what was found. |
 | [docs/RUNBOOK_AUTOMATION.md](docs/RUNBOOK_AUTOMATION.md) | Turso, cron-job.org, healthchecks.io, PAT rotation. |
+| [docs/PLAN_ACTIVE_SCREENER.md](docs/PLAN_ACTIVE_SCREENER.md) | Draft plan: coverage-aware scoring, the hourly Pulse (flow, volume, OI, 1H/4H structure), and how it is measured. |
 
 ## Non-negotiables
 
@@ -125,7 +128,7 @@ These are enforced in code or CI, not by convention:
 
 ## Status
 
-Phases 0–11 implemented; 490 Python tests passing. The parts that need calendar
+Phases 0–11 implemented; 534 Python tests passing. The parts that need calendar
 time rather than code are, by design, not done: the 14-day autonomy proof, six
 months of journal data, and the first honest backtest. The backtest harness is
 built and deliberately refuses to run until the data supports it.
