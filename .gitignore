@@ -21,6 +21,11 @@
 # at its first deploy indefinitely -- with no error anywhere.
 data/*
 !data/public/
+# Pulse is baked hourly inside build-site and deployed WITHOUT a commit (PLAN
+# section 6): 24 data commits a day would bloat a permanent history. publish.yml
+# commits data/public/**, so this file must be ignored explicitly. A file, not a
+# directory, so the negation above still reaches everything else.
+data/public/pulse.json
 
 # Logs
 logs/

@@ -60,6 +60,8 @@ class Secrets(BaseSettings):
     # Used by the workflows; declared so `doctor` lists them when unset (D-065).
     healthcheck_supply: str | None = None
     healthcheck_site: str | None = None
+    # collect-hourly `pulse` job: one Pulse hour scored (D-080).
+    healthcheck_pulse: str | None = None
 
     @field_validator("*", mode="before")
     @classmethod
