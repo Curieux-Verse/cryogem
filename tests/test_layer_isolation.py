@@ -30,6 +30,10 @@ SCREENING_MODULES = (
     "src.screening.layer1_kill",
     "src.screening.layer2_score",
     "src.screening.pipeline",
+    # Pulse scores too, so news must never reach it either.
+    "src.pulse.features",
+    "src.pulse.score",
+    "src.pulse.structure",
 )
 
 #: The forbidden dependency.
