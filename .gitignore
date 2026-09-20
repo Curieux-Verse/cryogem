@@ -65,3 +65,7 @@ secrets.json
 pat.txt
 *pat*.txt
 *.pat
+
+# Agent worktrees and local Claude Code state. Never committed: the worktrees
+# are full checkouts of this repo.
+.claude/
