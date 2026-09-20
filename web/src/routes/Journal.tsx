@@ -25,6 +25,28 @@ import type { GroupStats, Journal as JournalData } from "../lib/types";
 
 const MIN_FOR_CONCLUSION = 30;
 
+/** What an entry written before score_version existed belongs to (D-076). */
+const LEGACY_VERSION = "gem-v1";
+
+function statisticsFor(data: JournalData, version: string) {
+  return data.statistics_by_version?.[version] ?? data.statistics;
+}
+
+/** Newest method first, so the current cohort is the default view. */
+function versionsOf(data: JournalData): string[] {
+  const known = Object.keys(data.statistics_by_version ?? {});
+  const seen = new Set([
+    ...known,
+    ...data.entries.map((e) => e.score_version ?? LEGACY_VERSION),
+  ]);
+  const current = data.score_version;
+  return [...seen].sort((a, b) => {
+    if (a === current) return -1;
+    if (b === current) return 1;
+    return b.localeCompare(a);
+  });
+}
+
 function Moment({ stats, field }: { stats: GroupStats; field: "median" | "mean" }) {
   const value = stats.vs_btc?.[field] ?? null;
   if (value === null) return <span className="num text-muted">{DASH}</span>;
@@ -83,15 +105,28 @@ function Histogram({ values, label }: { values: number[]; label: string }) {
   );
 }
 
-function HorizonPanel({ data, horizon }: { data: JournalData; horizon: string }) {
-  const stats = data.statistics[horizon];
+function HorizonPanel({
+  data,
+  horizon,
+  version,
+}: {
+  data: JournalData;
+  horizon: string;
+  version: string | null;
+}) {
+  // D-076: a cohort is one scoring method. Blending two methods' returns into
+  // one number would make a methodology change look like a result.
+  const stats = (version ? statisticsFor(data, version) : data.statistics)[horizon];
   if (!stats) return null;
 
-  const signalReturns = data.entries
+  const cohort = data.entries.filter(
+    (e) => !version || (e.score_version ?? LEGACY_VERSION) === version,
+  );
+  const signalReturns = cohort
     .filter((e) => !e.is_control && e.returns[horizon]?.return_vs_btc !== undefined)
     .map((e) => e.returns[horizon]?.return_vs_btc)
     .filter((v): v is number => typeof v === "number");
-  const controlReturns = data.entries
+  const controlReturns = cohort
     .filter((e) => e.is_control && e.returns[horizon]?.return_vs_btc !== undefined)
     .map((e) => e.returns[horizon]?.return_vs_btc)
     .filter((v): v is number => typeof v === "number");
@@ -207,15 +242,24 @@ export default function Journal() {
   const journal = useData(getJournal);
   const [group, setGroup] = useState<"all" | "signal" | "control">("all");
   const [horizon, setHorizon] = useState("30d");
+  const [version, setVersion] = useState<string | null>(null);
+
+  const versions = useMemo(
+    () => (journal.state === "ready" ? versionsOf(journal.data) : []),
+    [journal],
+  );
+  // Default to the method in force now; the reader can switch to an older one.
+  const shown = version ?? versions[0] ?? null;
 
   const entries = useMemo(() => {
     if (journal.state !== "ready") return [];
     return journal.data.entries.filter((entry) => {
+      if (shown && (entry.score_version ?? LEGACY_VERSION) !== shown) return false;
       if (group === "signal") return !entry.is_control;
       if (group === "control") return entry.is_control;
       return true;
     });
-  }, [journal, group]);
+  }, [journal, group, shown]);
 
   return (
     <Gate
@@ -240,8 +284,32 @@ export default function Journal() {
               </div>
             ) : (
               <div className="mt-8 space-y-8">
+                {versions.length > 1 ? (
+                  <div className="flex flex-wrap items-end gap-4">
+                    <label className="text-xs text-muted">
+                      <span className="block">Scoring method</span>
+                      <select
+                        value={shown ?? ""}
+                        onChange={(event) => setVersion(event.target.value)}
+                        className="mt-1 border border-line bg-transparent px-2 py-1 text-sm"
+                      >
+                        {versions.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                            {v === data.score_version ? " (current)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="max-w-xl text-xs text-muted">
+                      Cohorts are never blended. A change of method starts a new
+                      record, so returns earned under the old scoring are shown
+                      under the old name rather than added to the new one.
+                    </p>
+                  </div>
+                ) : null}
                 {data.horizons.map((h) => (
-                  <HorizonPanel key={h} data={data} horizon={h} />
+                  <HorizonPanel key={h} data={data} horizon={h} version={shown} />
                 ))}
               </div>
             )}

@@ -58,8 +58,7 @@ layer1:
   # floor, D-007) -- loudly -- rather than screening on stale holders.
   holder_snapshot_max_age_days: 1
 
-# Weights sum to 110 DELIBERATELY — normalise to 100 after computing.
-# If a block is unavailable for an asset, renormalise over the remaining blocks.
+# Weights sum to 110 DELIBERATELY — normalised over the LIVE blocks (D-075).
 # D-077: sum 110, normalised over the blocks LIVE in the run (D-075). Momentum
 # (7-day flow and trend) and drawdown (reversal) deliberately pull in opposite
 # directions; the literature supports both at different horizons, and the

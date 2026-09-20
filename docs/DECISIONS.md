@@ -2091,3 +2091,853 @@ CoinGecko gives them no category in this taxonomy — **MASK among them**
 (ecosystem and portfolio tags only), plus BAT, ENS, SYN, EDU, USDC and the
 fan tokens. That is the file's own rule working: a null is honest, a guess is
 not. Existing curated rows were not touched.
+
+## D-074 — Open interest may confirm price and flow in Pulse, never lead; funding stays risk-only
+
+**Date:** 2026-09-19 · **Status:** accepted (owner) · **Amends:** D-002 · **Revises:** D-015 (bar-level flow)
+
+D-002 said derivatives are a risk check, never a buy trigger. The owner accepted
+one narrow exception for the hourly Pulse score: "order flow and price-volume
+trends are extremely essential in liquidity driven assets like crypto". Open
+interest may **raise** a Pulse score only as a *conditioner* of price and taker
+flow that already agree. It never raises one by itself. Funding never raises a
+score at all. The Gem score, Layer 1 and Layer 3 are unchanged: D-002 still
+holds there in full.
+
+**Why.** The literature supports order flow (Anastasopoulos et al., J. Financial
+Markets 2026) and price-volume trend (Fieberg et al., JFQA 2025; Liu,
+Tsyvinski & Wu, JF 2022) as directional signals. No study found supports
+standalone OI change as one. OI build-ups do predict *fragility* (Oct 10–11
+2025, ~$19B liquidated; TRB, the D-002 case). So OI is allowed to say "new
+money is behind this move" and nothing more.
+
+**The mapping** (`src/pulse/features.py::oi_quadrant`, 4H and 24H). OI change is
+measured in **contracts** (`oi_contracts`), never notional: notional moves with
+price, and a "rising OI" that is only a rising price confirms price with itself.
+
+| Price (vs own-sigma flat band) | OI (vs `oi_flat_change`) | Taker flow | Quadrant | Score |
+|---|---|---|---|---:|
+| up | up | buying (> 0) | confirm_long | 100 |
+| up | up | not buying | neutral | 50 |
+| up | down | any | short_covering | 50 |
+| up | flat | any | neutral | 50 |
+| down | up | selling (< 0) | new_shorts | 0 |
+| down | up | not selling | neutral | 50 |
+| down | down | any | long_liquidation | 0 |
+| flat | up and ≥ `extreme_own_pctile` of own history | any | leverage_build | 25 |
+| flat | anything else | any | neutral | 50 |
+
+"Flat price" is |return| < `no_move_sigma` × the asset's own sigma at that
+horizon (std of 1H log returns over `zscore_lookback_days`, × √hours).
+Only the 24H quadrant enters the `oi_confirm` component (weight 10 of 100);
+the 4H quadrant is published as a feature.
+
+**Where OI and funding may lower a score.**
+- R1 crowding (×`crowding_multiplier`): funding > 0 and at or above its own
+  `extreme_own_pctile`, AND the 24h OI change at or above its own
+  `extreme_own_pctile` and a real rise (≥ `oi_flat_change`).
+- R2 leverage without a move (×`leverage_no_move_multiplier`): the same OI
+  condition with |24h return| < `no_move_sigma` × own 24h sigma. The TRB shape.
+- Both multiply when both apply.
+
+**Guarded by test, not by review** (`tests/test_pulse_signals.py`):
+- `test_oi_alone_never_raises_a_score`: 16 seeded scenarios, run end to end
+  through compute_features and score_pulse. Price and flow are held fixed, and
+  the scenarios where both are already positive are skipped. OI rising 0.5–50%
+  or falling 2–20% never scores above flat OI.
+- `test_funding_never_raises_a_score`: 12 scenarios × 5 funding regimes,
+  including deeply negative funding (the TRB misreading). The score with
+  funding is never above the score without it.
+
+**Known interaction with D-075.** Under D-075 a live component that an asset
+lacks contributes 0. So an asset with *no* OI data scores 0 on `oi_confirm`,
+while one with flat OI scores 50. That rewards having data, not rising OI. It
+is the owner's missing-data rule working as intended. If OI is dark for fewer
+than `live_min_assets` assets, the component drops out for everyone.
+
+**D-015, revised for bars.** Binance's kline `taker_buy_quote` is flagged by
+aggressor on the exchange and summed per bar. So bar-level flow,
+(2·taker_buy − volume) / volume, is an honest measurement and not the
+close-location proxy D-015 rejected. D-015 still stands for tick-level CVD.
+
+## D-075 — Missing data scores nothing
+
+**Date:** 2026-09-19 · **Status:** accepted (the owner's decision)
+
+**Context.** `Layer2Scorer.score()` renormalised each asset's total over the
+blocks *that asset* had, and `_combine()` did the same over metrics inside a
+block. A missing block therefore handed its weight to the blocks that were
+measured. That rewarded missing data. A coin measured on two strong blocks
+outranked one measured on five, and on the 2026-09-19 screen **10 of the top 15**
+were scored on supply and drawdown alone
+(`docs/PLAN_ACTIVE_SCREENER.md` §1). The plan proposed a neutral fill at 50.
+The owner rejected it: *"Don't let missing data score anything, it's just
+manipulating and inflating a coin's potential."* A 50 is still a score for
+something nobody measured.
+
+**Decision.**
+
+- **Live blocks.** A block is live in a run when it has a non-null score for
+  at least `layer2.live_min_assets` (5) survivors. Then
+  `total = Σ_live w_b · score_b / Σ_live w_b`, and a missing live block
+  contributes **0**. A block below the floor is *dark* and drops out for
+  everyone at once. So a universally dark source (attention, while
+  LunarCrush stays unpaid) neither reorders the ranking nor deflates every
+  absolute score by its weight.
+- **Live metrics.** The same rule applies inside every block (`_combine`). A
+  live metric the asset lacks contributes 0, and a dark metric drops out for
+  everyone. A block with no live metric measured for the asset stays
+  **None**, so the row still says "unmeasured" and never "measured 0". It
+  earns 0 at the composite.
+- **Small universes.** With fewer than 5 survivors, the floor is the whole
+  universe (`live_floor`). There, a block measured for 1 of 3 assets is not a
+  cross-section.
+- **Coverage.** Per asset, coverage is the live-block weight measured divided
+  by the total live-block weight. It is persisted to `layer2_result.coverage`
+  and published. `blocks_available` now counts measured *live* blocks,
+  because a reading on a dark block moved nothing.
+- **Unscorable.** An asset measured on no live block has a NaN total and is
+  omitted, as before. It is never written as a score of 0.
+
+**Audit of every other path** (each judgement is commented in
+`src/screening/layer2_score.py`):
+
+| Path | Finding | Judgement |
+|---|---|---|
+| `_weighted_mean` | Renormalising helper with no caller anywhere | Removed |
+| Unlock-overhang bonus (+25 supply) | Added to a NaN supply, it stays NaN | Kept. It lifts measured supply only, and the flag alone can never produce a supply score |
+| Monitoring tag | Forces events to 0 | Kept. The tag *is* a measurement, so a tagged asset counts as measured on events |
+| `positive_catalyst` (100-or-NaN) | **Inflation.** Renormalised, an asset whose only events reading was a catalyst scored events 100 | Fixed by the metric rule: a catalyst now adds its third of the block (33.3) and its absence earns 0. With fewer than 5 known catalysts the metric is dark, like any other |
+| Sector `unclassified` → NaN | Under renormalisation, sector weight flowed to the asset's other blocks | Now earns 0. D-073 mapped most top-ranked coins, and the 53 left unclassified are honest nulls |
+| Attention `MIN_GATED_EXTREMES` (3) | Superseded in practice by the live floor (5) on any real universe | Kept as the percentile's own guard. A gated-out asset earns 0 on the z metric, which is exactly "contributes nothing". The block is dark while unpaid (the owner's call) |
+| `has_fundamentals == 0` mask | Can only remove a reading | Kept. A non-revenue token now earns 0 on a live fundamental block, as the owner's rule requires |
+| `active_addresses` metric | `active_addresses_24h` has no writer (DefiLlama writes a literal `None`), so the metric was None for every asset | Metric removed (plan 0.6). The column stays |
+
+**Consequences.**
+
+- Absolute totals fall for thinly measured coins, and the ranking now favours
+  breadth of evidence. Weight is only redistributed when a block is dark for
+  *everyone*.
+- The module's WHY header said the opposite ("a None redistributes weight")
+  and has been rewritten.
+- Existing tests that encoded renormalisation were updated. Each change is
+  explained in its docstring.
+- `config/thresholds.yaml` line 62 still carries the old one-line comment
+  ("renormalise over the remaining blocks"), just above the D-077 comment that
+  supersedes it. It was left alone because config is a shared scaffold file.
+  It should be deleted when these entries are folded into DECISIONS.md.
+- This is a method change, so it ships as `gem-v2` (D-076).
+
+**Evidence.** `tests/test_gem_v2.py::TestMissingDataScoresNothing` is the
+plan's acceptance test: a 2-block asset cannot outrank an otherwise identical
+5-block one, and the old formula is reproduced to show it did. The same file
+covers:
+- a block dark for everyone changing neither the order nor the absolute scores;
+- a sub-floor block with a few readings;
+- coverage arithmetic;
+- the unscorable path;
+- `TestMetricLevelLiveRule`, the metric-level rule plus the catalyst, tag,
+  overhang and `active_addresses` audits.
+
+## D-076 — Every score says which method made it, and cohorts never blend
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+**Context.** The scoring method changed three times in one week: D-071, D-072
+and D-073, then D-075 and D-077. Nothing stored recorded which method produced
+a row. `journal --report` pooled every entry into one distribution, so a
+return earned under one method was counted as evidence for another. The
+journal is the only component that produces truth, and blending cohorts would
+quietly let an old method's record vouch for a new one.
+
+**Decision.**
+
+- `layer2_result.score_version` is stamped on every row by `run_layer2`, from
+  `thresholds.layer2.score_version`, which is now `gem-v2`.
+- `journal_entry.score_version` is stamped on every entry, using the
+  version of the **ranking it came from** (read from its `layer2_result`
+  row), not today's config. A late or repeated journal run over an older
+  ranking therefore cannot relabel its method. Controls take their day's
+  version, because they are that cohort's control. The table stays
+  append-only: the value is written once, at insert.
+- A NULL version is a row written before stamping began, and reads as
+  `gem-v1` everywhere (SQL `COALESCE`, `LEGACY_SCORE_VERSION`).
+- **Evaluation is per cohort.** `compute_statistics(horizon, score_version)`
+  reads exactly one cohort. The default is the current method, because that
+  is the one a reader is deciding whether to trust. There is deliberately no
+  "all cohorts" call. `journal --report` renders one section per cohort, the
+  current method first.
+- `journal.json`:
+  - `statistics` is the current cohort;
+  - `statistics_by_version` holds every cohort;
+  - `score_version` names the current method;
+  - each entry carries its `score_version`.
+- `latest.json` and each asset JSON carry `score_version`.
+
+**Consequences.**
+
+- On the day gem-v2 deploys, the current cohort has no completed returns, and
+  the journal page and report say "not enough data" for it. The gem-v1
+  record stays visible under its own name. This is intended: the old record
+  is evidence about the old method only. The dashboard's journal page should
+  read `statistics_by_version` if it wants to show the older cohort.
+- Every future change to weights, windows or metric definitions bumps
+  `score_version` with a D-number, per plan §7. A version is never edited
+  in place.
+- The backtest harness's cross-check still compares journal and harness
+  returns across all dates. That is a price-path agreement test, not an
+  evaluation of a method, so blending there is harmless. Its attached
+  `journal_statistics` is the current cohort.
+
+**Evidence.** `tests/test_gem_v2.py::TestScoreVersionCohorts` covers:
+- stamping from the ranking, with the legacy ranking recorded as gem-v1;
+- statistics that do not leak across cohorts;
+- the report grouped by version;
+- `cli journal --report`.
+
+`TestPublishedContract::test_journal_json_splits_statistics_by_version` covers
+the published file.
+
+## D-077 — A momentum and flow block in the Gem score, from complete daily bars
+
+**Date:** 2026-09-19 · **Status:** accepted (weights proposed in plan §5.3)
+
+**Context.** Every Gem input is a slow, 7-to-90-day quantity. The ranking was
+0.945 rank-correlated between 09-16 and 09-19, so nothing in the score could
+move overnight (plan §1). The literature supports a medium-horizon trend and
+flow signal in the crypto cross-section:
+- **Liu, Tsyvinski & Wu** (J. Finance 2022): momentum is one of three crypto
+  factors.
+- **Fieberg et al.** (JFQA 2025): CTREND, a price and volume trend across
+  horizons, holds over 3,000+ coins after costs, including large liquid ones.
+- **Anastasopoulos, Gradojevic, Liu, Maynard & Tsiakas** (J. Financial
+  Markets 2026): order flow predicts the cross-section of 82 coins, with a
+  permanent effect.
+
+**Decision.** A seventh block, `momentum` (weight 20; the weights are now
+fundamental 30, supply 20, momentum 20, sector 10, events 10, attention 10,
+drawdown 10). All metrics are cross-sectional and higher is better. The
+component weights live in code, like every other block:
+
+| Metric | Weight | Definition |
+|---|---|---|
+| `flow_7d` | 2.0 | (2·Σ taker buy − Σ volume) / Σ volume over the last 7 complete daily bars. All 7 must carry taker volume |
+| `vamom_7d` | 1.5 | 7-day return / (std of the last 30 daily log returns · √7) |
+| `vamom_30d` | 1.0 | 30-day return / (std of the last 60 daily log returns · √30) |
+| `trend_1d` | 1.0 | EMA20/EMA50 on closes: 100 when close > EMA20 > EMA50 and EMA20 is rising, 0 for the mirror, else 50. Needs ≥ 60 bars. Used as a state, not ranked |
+
+- **Complete bars only.** Daily klines close at 23:59:59.999 UTC. The screen
+  runs at about 03:10 UTC after collect-daily, and the klines collector
+  never writes a forming bar. The newest complete bar is therefore
+  `run_date − 1`. Bars are read strictly before `run_date` and from
+  `source = 'binance_klines'` only. The `run_date` row is excluded: it is
+  either CoinGecko's 03:10 point-in-time price or, on a re-screen, a bar
+  that closed after the screen. Every metric also requires the
+  `run_date − 1` bar itself. If klines missed yesterday and CoinGecko's
+  close-only row sits there, the asset is unmeasured rather than scored on
+  a stale series. One query loads 90 days for all survivors.
+- **Tolerance.** A volatility window needs 80% of its daily returns. That
+  way one missed collection day does not blank a coin for two months, and
+  a young listing is not scored on half a window. Zero volatility yields
+  no reading.
+- **Data.** `price_daily.taker_buy_usd` is Binance kline index 10, taker buy
+  **quote** volume (index 9 is base units; the layout matches the documented
+  spot `/api/v3/klines` array). It is stored un-divided, like
+  `volume_usd`. `KEEP_WHEN_NULL` protects it, so a kline re-fetch without the
+  field cannot blank it. A CoinGecko row never carries the column, and
+  `PREFERRED_SOURCE` already keeps a kline row whole against it.
+  `INCREMENTAL_DAYS = 7` fills the flow window after one daily run.
+- **Weight fix found on the way.** Binance charges USD-M klines by `limit` in
+  half-open bands: [1,100) = 1, [100,500) = 2, [500,1000] = 5 (ccxt:
+  `byLimit [[99,1],[499,2],[1000,5],[10000,10]]`). `PAGE_LIMIT = 500` cost
+  5, not the 2 the header claimed. It is now 499 for backfills, and daily
+  incremental requests use `limit = 99` (weight 1). Weight is charged on
+  `limit`, not on bars returned, so the daily 528-symbol pass drops from
+  about 2,640 weight to about 528.
+- **Published.**
+  - `latest.json` rows: `blocks.momentum`, `coverage`, `score_version`.
+  - `latest.json` top level: `score_version` and `live_blocks`. The live
+    blocks are derived exactly from the stored rows by `live_blocks_for_run`.
+  - Asset JSON `layer2`: `coverage`, `score_version`, `blocks.momentum`.
+  - The daily markdown adds Mom and Cov columns.
+  - `block_correlation_report` and the backtest's per-block attribution
+    include momentum.
+
+**Consequences.**
+
+- Momentum (continuation) and drawdown (reversal) deliberately pull in
+  opposite directions. The literature supports both at different horizons,
+  and after 30 days `block_correlation_report` and the journal settle it.
+- Per plan §7's kill criterion, if the Pulse top decile fails to beat its
+  control after 200 events, this block's weight goes to 0 under a new
+  `score_version`.
+- Until one daily run has written `taker_buy_usd`, `flow_7d` is unmeasured
+  for everyone and dark (D-075). The price metrics are live at once from
+  the existing kline history.
+
+**Evidence.** `tests/test_gem_v2.py` covers:
+- each metric on synthetic `price_daily` rows (`TestMomentumFeatures`),
+  including forming-bar exclusion, a stale series, missing taker data giving
+  no flow, the 60-bar trend minimum, a young listing, and a flat series;
+- the loader's `source` and date bounds (`TestMomentumLoader`);
+- missing taker data earning 0 rather than a renormalised score
+  (`TestMomentumBlock`);
+- persistence of `score_momentum`, `coverage` and `score_version`;
+- kline index 10, write-path protection and request limits
+  (`TestTakerBuyCollection`);
+- the published names (`TestPublishedContract`).
+
+## D-078 — Pulse market data: 1H bars, OI and funding cut at `as_of`, stored against a cursor
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+Pulse (docs/PLAN_ACTIVE_SCREENER.md section 5.1) needs, every hour, three
+series for each Layer 1 survivor plus the benchmark: 1H klines, 1H open
+interest and settled funding. `src/pulse/data.py` fetches them, cuts them at
+`as_of` and stores what is new. It returns a `MarketWindow` exactly as
+`src/pulse/contract.py` pins it.
+
+**Endpoints.** All three are on the website host (D-070):
+
+| Path | Params | Metered by |
+|---|---|---|
+| `/fapi/v1/klines` | `interval=1h, limit=499, endTime=as_of−1ms` | the 2,400-weight minute (`binance_futures`) |
+| `/futures/data/openInterestHist` | `period=1h, limit=500, endTime=as_of` | its own IP limit, 1,000 / 5 min (`binance_futures_data: 180`/min) |
+| `/fapi/v1/fundingRate` | `limit=100, endTime=as_of` | its own IP limit, 500 / 5 min shared with fundingInfo (`binance_funding: 90`/min) |
+
+**What was measured live on 2026-09-19** (read-only, public):
+
+- **Kline weight.** Binance documents `limit` [100, 500) as weight 2 and
+  [500, 1000] as weight 5. The `x-mbx-used-weight-1m` header billed 500 at 2
+  and 1000 at 5. `klines_limit` is **499**, which is weight 2 under either
+  reading and costs one bar (20.8 days instead of 20.8 days + 1h).
+- **Kline `endTime` filters on open time.** With `endTime = as_of`, the bar
+  still forming at `as_of` comes back. With `as_of − 1ms`, it does not. The
+  parser also drops any bar with open + 1h > as_of, so a replay can never
+  see a partial high, low or volume.
+- **An OI row stamped T is the open interest at the instant T.** It is not
+  an aggregate over the hour. The 1h row at T equals the 5m row at T, on
+  BTCUSDT and ONTUSDT, for four consecutive hours. So `ts ≤ as_of` is the
+  honest cut, and the row at `as_of` itself is visible. By 15:3x UTC, the
+  15:00 row was already published.
+- **Funding stamps have jitter.** `fundingTime` came back as
+  08:00:00.**002**. Binance's own `endTime=08:00:00.000` still returned it.
+  Stamps are floored to the whole second and kept when ≤ as_of.
+- **Array positions:** 0 open time, 1 to 4 OHLC, 5 base volume, 6 close
+  time, 7 quote volume, 8 trades, 9 taker-buy base, 10 taker-buy quote. A
+  bar is refused if it has fewer than 11 fields, does not open on the hour,
+  or does not close 1ms before the next hour. It is also refused if any
+  field is unreadable. A NaN taker-buy inside a sum would bias flow rather
+  than show as missing.
+- **Ten symbols, as_of 15:00.** Each returned 499 closed bars, the last
+  opening 14:00. Mean taker-buy / quote volume was 0.48 to 0.50 (range 0.14
+  to 0.81), and every symbol had 500 OI rows ending at 15:00. oi_contracts ×
+  close / oi_usd came to 1.000 on every symbol, 1000PEPE included.
+
+**1000-prefixed contracts** are de-multiplied the way `klines.py` does it for
+`price_daily`. Prices are divided by the multiplier, OI contracts are
+multiplied back into tokens, and USDT amounts are left alone. `bar_1h.close`
+is then per token, like every other price in the database. The multiplier
+and symbol come from the newest `universe_snapshot` on or before the as_of
+day. That snapshot already resolves collisions (D-046), and the unmultiplied
+contract is preferred as in `screening.pipeline`.
+
+**Who is fetched.** The survivors are the `passed = 1` rows of the newest
+`layer1_result` run dated on or before the as_of day, plus
+`pulse.benchmark_asset`. Both lookups use `ORDER BY date DESC LIMIT 1` on
+the date index rather than `MAX()` with a second predicate, which can scan.
+Turso meters reads.
+
+**Storage.** One query reads every `series_cursor` row for `bar_1h` and
+`oi_1h`. Only rows after an asset's cursor are upserted, and then the cursor
+advances. There is never a `MAX()` over `bar_1h`. Two cases write the whole
+fetched window:
+
+- the asset has no cursor, which is the ~21-day backfill, free on first
+  sight;
+- the cursor was recorded under another contract symbol.
+
+A cursor never moves backwards under the same symbol, so replaying a past
+hour writes nothing. Cursors are written last. A crash before them only
+means the next run rewrites the same rows, which the upsert makes harmless.
+
+Steady state per asset per hour is 1 bar row, 1 OI row and 2 cursor rows,
+plus 3 `table_stats` bumps per run. At ~161 assets that is about 650 writes
+an hour, ~0.47M a month, inside the plan's +0.6M. Funding is not stored,
+because `derivatives_snapshot` already records it hourly.
+
+**Failure rules** (D-051, D-052):
+
+- **klines failed for an asset.** The asset goes into
+  `window.fetch_errors` (`"klines: …"`) with no bars, OI or funding, stays
+  in `window.survivors`, and the run is partial. If more than 20% of fetched
+  assets fail, the run is failed.
+- **OI or funding failed for an asset.** This is a `warn()`, so the run is
+  partial. The asset is left out of `window.oi` / `window.funding` but keeps
+  its bars, and it is *not* in `fetch_errors`. Features score what was
+  measured (D-075). Above 20% there is an extra `pulse_*_mostly_unavailable`
+  warning, but the run does not fail: Pulse can still score without OI.
+- **A survivor with no TRADING Binance perp** goes into `fetch_errors` and
+  gets a warning.
+- **418.** `IPBannedError` escapes the `TaskGroup`, which cancels every
+  sibling task, and the run fails. The only calls that still reach Binance
+  are the ≤ 3 × `concurrency` already in flight.
+- **After a failed run**, `collector.window` is `None`. After success or
+  partial, it is the `MarketWindow`.
+
+**Not in any tier.** `binance_pulse` is in `registry.COLLECTORS`, so
+`collect binance_pulse` works by hand. `src/pulse/run.py` runs it inside
+`collect-hourly` and reads `.window`.
+
+**Watch for.**
+
+- **Funding history is short.** `funding_limit: 100` is 33 days of an 8h
+  symbol but 16.7 days of a 4h one (ONT) and 4 days of a 1h one. R1's "own
+  90 days" percentile cannot come from this window alone.
+- **The OI row for `as_of` may not be published yet.** The plan runs at :03.
+  A missing row is simply absent this hour, and the cursor picks it up next
+  hour. An OI row that appears only after a *later* row was written would be
+  skipped by the cursor. This was not observed.
+- **Proxied-path limits are unverified from CI.** The `/futures/data` and
+  `fundingRate` paths were verified reachable on `www.binance.com` from a
+  laptop only. D-070's CI table covered `/fapi/v1/*`.
+
+## D-079 — Pulse signals: definitions, windows and weights (`pulse-v1`)
+
+**Date:** 2026-09-19 · **Status:** accepted · **Code:** `src/pulse/features.py`, `structure.py`, `score.py`
+
+Pulse is the hourly clock: survivors of Layer 1 only, horizon 4–72 hours,
+scored separately from the Gem score (docs/PLAN_ACTIVE_SCREENER.md §2, §5).
+This entry pins what every number means, so `pulse-v1` can be journalled
+and compared later. Changing anything below needs a new D-number and a new
+`score_version`.
+
+### Time
+
+- **Closed bars only.** `data.py` filters on the way in. `compute_features`
+  strips again, and logs `pulse_lookahead_stripped`, any 1H bar with
+  open + 1h > `as_of` and any OI or funding stamp > `as_of`. The test
+  appends a still-open bar, future bars, future OI and future funding, and
+  asserts the frame is unchanged.
+- **Time, not rows** (the D-060 lesson). Bars sit on an hourly grid that ends
+  at `floor(as_of) − 1h`, and "24h ago" means 24 slots back. A gap stays NaN,
+  never a silently shorter window. A series that stopped printing measures
+  nothing current: its returns and last-bar thrust are NaN.
+- **4H bars** are resampled from 1H bars, aligned to 00/04/…/20 UTC and
+  stamped with their open time. A bucket is kept only if all four of its 1H
+  bars exist, so a bucket that is still forming or has a hole is dropped.
+  `thrust_4h` needs the newest complete bucket to be the expected one.
+- A windowed sum or std needs at least 75% of its bars.
+
+### Features
+
+| ID | Definition |
+|---|---|
+| F1 `flow_4h`, `flow_24h` | (2·Σ taker_buy_quote − Σ quote_volume) / Σ quote_volume over the last 4 / 24 grid bars. Range [−1, 1] |
+| F1 `flow_24h_z` | the current rolling-24h flow against the previous `zscore_lookback_days`×24 hourly values of the same series (current value excluded), ddof 1; needs ≥ 72 values |
+| F2 `thrust_1h`, `thrust_4h` | log(volume of the last closed bar / median volume of the prior `thrust_baseline_bars` bars) × sign(close − open) of that bar |
+| F3 `vamom_24h`, `vamom_7d` | simple return over 24 / 168 h ÷ (std of the window's 1H log returns × √n) |
+| F3 `vamom_24h_z` | the current rolling vamom_24h against its own history, same rule as flow_24h_z |
+| F4 `oi_chg_4h`, `oi_chg_24h` | fractional change in `oi_contracts`. An OI reading may be carried forward 1 hour, no more |
+| F4 quadrants | D-074 table |
+| F5 / F6 `state_4h`, `state_1h` | see Structure |
+| `oi24_own_pctile`, `funding_own_pctile` | share (0–100) of the asset's own past values at or below the current one. OI: 24h changes over the lookback, ≥ 72 values. Funding: every settlement supplied, ≥ 30 values, because 8-hourly settlements over 20 days are only 60 points |
+
+The own-history sigma used for "flat" and "no move" is the std of 1H log
+returns over the lookback, × √hours. It comes from the asset's own history,
+not the same window, because a quiet day would otherwise define its own
+quietness away.
+
+### Structure (F5 4H, F6 1H)
+
+These use the same geometry as Layer 3's detector, restated pure and
+parameterised by `PulseStructure`:
+- a pivot has `swing_window_bars` strictly lower (or higher) bars on each side;
+- a line is valid only if no close crossed it between its endpoints;
+- among valid lines, most touches wins, then most recent;
+- a break is a close beyond line × (1 ± tolerance).
+
+Layer 3 itself is not imported: it reads `thresholds.layer3`, assumes daily
+dates, and imports the database layer.
+
+- **bull_break**: a descending line through ≥ `trendline_min_touches` swing
+  highs, inside the last `lookback_bars`, first broken by a close within
+  `max_bars_since_break` bars, **and the newest close is still above it**. A
+  break that closed back inside the line has failed, and a score cannot
+  "leave it to the reader" the way Layer 3 can. bear_break is the mirror,
+  through ascending swing lows. If both are live, the more recent one wins,
+  and on the same bar the bearish one wins. `invalidation` is the line's value
+  at the newest bar.
+- **bull_trend**: EMA fast > slow on each of the last 3 bars, both EMAs higher
+  than 3 bars ago, and close > EMA fast. bear_trend is the mirror, and
+  anything else is neutral. The stack must hold for the whole slope window:
+  without that, a flat choppy series flipped the stack every bar and read as
+  a trend (found by test). `bars_since` counts bars since the stack last
+  flipped. It is a lower bound when the stack never flipped after warm-up.
+- **Too little history raises.** Neutral scores 50, and missing data must
+  score nothing (D-075). The floor is `ema_slow + ema_fast` bars (70 at
+  20/50), about 11.7 days of 1H data for 4H. An asset with the minimum week of
+  1H bars therefore has no `state_4h` yet.
+
+### Exclusions and flags
+
+- `thin_book`: 24h quote volume < `min_quote_volume_24h_usd`, or no volume at
+  all in the last 24h.
+- `insufficient_history`: fewer than `min_bars_1h` closed bars.
+- Both exclude the asset: it keeps a row with a NaN score and NaN rank, and
+  never enters a percentile pool.
+- R1 and R2: see D-074.
+
+### Score
+
+Each component is 0–100. Percentile components are ranked cross-sectionally
+**within the hour's scored set** (`cross_sectional_percentile`, reused from
+Layer 2).
+
+| Component | Weight | Inside |
+|---|---:|---|
+| flow | 25 | pct(flow_24h) ×1 + pct(flow_4h) × `flow_4h_relative_weight` (0.5) |
+| structure_4h | 20 | STATE_SCORE[state_4h] |
+| momentum | 20 | pct(vamom_24h) ×1 + pct(vamom_7d) ×1 |
+| thrust | 15 | pct(thrust_4h) ×1 + pct(thrust_1h) ×0.5. The 1H spike is the noisier reading of the same thing |
+| oi_confirm | 10 | OI_QUADRANT_SCORE of the 24H quadrant only |
+| structure_1h | 10 | STATE_SCORE[state_1h] |
+
+**Missing scores nothing (D-075).**
+- A sub-metric, or a component, is *live* when it is measured for at least
+  `live_min_assets` scored assets. A live one the asset lacks counts as 0;
+  its weight is not redistributed.
+- A dark one drops out for everyone.
+- `coverage` = Σ weight × (measured sub-weight ÷ live sub-weight) ÷ live
+  weight.
+- If nothing is live, nothing is scored.
+
+Composite = weighted mean over the live components × the R1/R2 multipliers,
+clipped to 0–100. Rank 1 is best, with ties broken by asset name.
+**ALIGNED** = Gem rank ≤ 25, score ≥ 70, state_4h in {bull_break,
+bull_trend}, and no R-flag.
+
+### Sanity run (2026-09-19 15:00 UTC, live Binance 1H klines, no OI or funding)
+
+| Asset | Score | 4H state | Note |
+|---|---:|---|---|
+| AVAX | 76.9 | bull_trend | +15.8% over 24h, thrust percentile 100 |
+| BTC | 73.9 | bull_break (5 bars ago) | strongest flow |
+| ETH | 73.9 | bull_break (5 bars ago) | |
+| LINK | 61.0 | bull_trend | |
+| DOGE | 58.1 | neutral | |
+| SOL | 57.8 | bull_trend | |
+| NEAR | 42.9 | bull_trend | weakest flow |
+| ONT | — | — | excluded, thin_book ($2.2M in 24h) |
+
+- `oi_confirm` was dark for everyone and dropped out, so coverage was 1.0 for
+  all scored assets.
+- The feed's still-open 15:00 bar was stripped for all eight symbols.
+- compute_features takes about 0.1 s per asset.
+
+## D-080 — Pulse runs hourly as its own job, redeploys the site without a commit, and alerts on state changes only
+
+**Date:** 2026-09-19 · **Status:** accepted · **Implements PLAN_ACTIVE_SCREENER section 6**
+
+**The hour scored.** `pulse run` scores `hour_floor(now)`: the newest hour whose
+1H bar has closed. The cron slot (currently :25) changes only how old the bars
+are, never which hour is scored, so a late or duplicate trigger re-scores the
+same hour and the `pulse_result` upsert makes it a no-op. If the collector
+fails, nothing is written to `pulse_result` and the command exits 1: a partial
+hour stamped as current is worse than a missing one, which the page reports as
+unavailable. `collect-hourly` never runs `init-db`, so the run creates the Pulse
+tables itself when one is missing (one `sqlite_master` read per run).
+
+**A job, not a step.** In `collect-hourly.yml` Pulse is a separate `pulse` job
+with no `needs`:
+
+* a step after `Collect hourly tier` would never run while any hourly collector
+  fails (CryptoPanic has returned 404 every hour, PLAN 0.4), and Pulse fetches
+  its own bars, OI and funding;
+* `continue-on-error` on a step would keep `HEALTHCHECK_HOURLY` green through a
+  dead Pulse. So each check means one thing: `HEALTHCHECK_HOURLY` = the collect
+  tier, the new optional `HEALTHCHECK_PULSE` = an hour scored,
+  `HEALTHCHECK_SITE` = the Pages deploy. The trigger-lag row is untouched.
+
+**Deploy without a commit.** A `site` job (`needs: pulse`, `if: !cancelled()`)
+calls `build-site.yml` as a reusable workflow (`workflow_call`,
+`secrets: inherit`, `pages: write`, `id-token: write`). `build-site` bakes
+`data/public/pulse.json` from the database before `npm run build`, so the file
+is in `web/dist` and covered by the bundle secret scan. It is gitignored:
+`publish` commits `data/public/**` and 24 data commits a day would bloat a
+permanent history. The daily chain is unchanged, and it bakes the file too, so a
+daily deploy never ships without it. `workflow_call` adds no `workflow_run`
+level (D-045). The build job's guard already admits it, because inside a called
+workflow `github.event_name` is the caller's (`workflow_dispatch`).
+
+* The bake step is `continue-on-error`, so a Pulse problem never blocks the Gem
+  site. The bake writes status `unavailable` whenever the database cannot be
+  read or the newest hour is over 3h old, and exits 1 only on a real error. The
+  page tells the truth and the red step still shows.
+* The hourly call checks out the newest `main` (`checkout_ref: main`), not the
+  dispatch SHA. A run dispatched just before the daily data commit would
+  otherwise redeploy yesterday's Gem files over today's. The input reaches
+  `actions/checkout` via job `env:`, which keeps ci.yml's interpolation guard.
+* `timeout-minutes` is rejected by GitHub on a job that `uses:` a workflow. The
+  test now exempts that job shape and checks the called jobs instead.
+
+**Alerts: state changes only.** One batched Telegram message per hour, for:
+(a) an asset newly ALIGNED; (b) `state_4h` newly `bear_break` on an asset with
+Gem rank ≤ `alert_bear_break_gem_top`. Both are measured against the previous
+scored hour, and only when that hour is at most 3h old. With no baseline there
+is no change to announce, so a cold start is silent. Nothing like "still
+bullish" is ever sent.
+
+* `pulse_alert` dedups the same asset and kind within 24h.
+  `alert_max_per_day` caps rows per UTC day, counting failed deliveries too, so
+  a broken bot cannot become a retry storm when it recovers.
+* When the cap bites, bear breaks go first: a risk warning is the alert a reader
+  loses money by missing.
+* Unset secrets skip quietly and record nothing. Recording would dedup the first
+  configured hour against alerts nobody received.
+* A delivery failure records `delivered = 0` and never fails the run. Delivery
+  reuses `src/report/telegram.py`, which never raises and never logs the token.
+
+## D-081 — The Pulse journal: events, a per-hour control, entry at the next bar's open
+
+**Date:** 2026-09-19 · **Status:** accepted · **Implements PLAN_ACTIVE_SCREENER section 7 (measurement only)**
+
+The daily journal's rules carry over unchanged (append-only, a random control,
+median and mean, excursions). What is specific to the hourly clock:
+
+**What gets an entry.** An asset that ENTERS the Pulse top `journal_top_n`
+(`trigger = 'top10'`) or ALIGNED (`'aligned'`) compared with the previous scored
+hour. Staying in is not an event. The previous hour must be at most 3h old;
+otherwise the hour writes nothing and becomes the new baseline. After an outage,
+"entered" would otherwise mean "entered at some point during the gap and was
+still there", which selects on persistence. An asset that enters both in one
+hour gets one entry per trigger, and the report never mixes triggers.
+
+**The control.** One per entry-hour, drawn from that hour's scored survivors
+that did not trigger (thin-book and insufficient-history assets are excluded
+from both sides). It is seeded from the hour, and its `entry_id` is per HOUR,
+not per asset, so a re-run whose pool changed cannot add a second control (the
+D-062 lesson). Signal ids are `(hour, asset, trigger)` hashes. Everything is
+written through `upsert`, which is INSERT OR IGNORE on these APPEND_ONLY
+tables, and the DB triggers refuse UPDATE and DELETE on the journal and DELETE
+on returns.
+
+**Entry price.** The signal hour `ts` is the hour the score describes (bars
+closed by `ts`). The run lands minutes later (:25 today), so the bar that opens
+AT `ts` has printed its open before the signal existed. The entry is therefore
+the OPEN of the bar opening at `ts + 1h`: the first price anyone could trade
+after the signal, at any cron minute. The exit is the close of the bar ending at
+entry + h. `max_favourable` and `max_adverse` use the highs and lows of every
+bar in between. `return_vs_btc` subtracts BTC over the same bars, from
+`bar_1h`. A return is written only when all h bars exist, with contiguous open
+times, and BTC's entry and exit bars exist too. Otherwise it stays pending.
+
+**Bounded reads.** Each run backfills horizons that have fallen due within the
+last 72h (`BACKFILL_GRACE`), using the `ts_signal_utc` index. Without that bound
+the hourly pending scan would grow with the whole journal. An entry still
+missing bars 72h after it fell due is never filled. That is an outage of ours,
+and it is logged rather than guessed.
+
+**Evaluation, not enforcement.** `pulse report` groups by `score_version`, then
+trigger, then horizon. It shows n, median and mean (raw and vs BTC), hit rate
+vs BTC, excursions, and the median and mean difference against that version's
+controls. It has no kill logic: it never zeroes a weight or relabels Pulse.
+Section 7's pre-registered criterion (200 events; the top decile must beat
+control on the 24h median by more than costs) is for the owner to read off
+this report.
+
+**Known limits, stated before any data.**
+* Entries overlap: an asset flapping around rank 10 re-enters, and its horizons
+  overlap. n counts events, not independent observations.
+* A perp delisted inside the horizon stays pending, then drops out after the
+  grace window. That is rare for an L1 survivor, but it is survivorship in the
+  direction that flatters Pulse. The daily journal's delisted exit (D-061) is
+  not yet mirrored here.
+
+## D-082 — The CryptoPanic 404 is a removed plan route, not a bad key
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+`news` has fetched `https://cryptopanic.com/api/developer/v2/posts/?auth_token=…`
+every hour and got `404` every hour. Run 35434649554 (collect-hourly,
+2026-09-19T09:26:13Z):
+
+```
+HTTP Request: GET https://cryptopanic.com/api/developer/v2/posts/?***redacted*** "HTTP/1.1 404 Not Found"
+[warning ] cryptopanic_unavailable  error='HTTP 404 from https://cryptopanic.com/api/developer/v2/posts/'
+```
+
+The token IS reaching the job (D-067 holds: `collect-hourly.yml` passes
+`CRYPTOPANIC_AUTH_TOKEN`, GitHub masks it as `***`, and `Secrets` reads it
+case-insensitively as `cryptopanic_auth_token`). Redaction also holds: the
+query string never left the runner in a log field.
+
+**Cause.** The API is plan-scoped — `/api/<plan>/v2/` — and the free Developer
+plan was discontinued in early 2026, *with its route removed*. Probed keyless
+on 2026-09-19 (a missing route answers before authentication, so the shapes are
+diagnostic on their own):
+
+| path | keyless response |
+|---|---|
+| `/api/developer/v2/posts/` | `404`, an HTML page |
+| `/api/growth/v2/posts/` | `400 {"status":"api_error","info":"Missing auth_token parameter"}` |
+| `/api/enterprise/v2/posts/` | `400`, the same |
+| `/api/{free,pro,basic,starter,business,…}/v2/posts/` | `404` |
+| `/api/growth/v2/posts/?auth_token=<invalid>` | `400 {"status":"api_error","info":"Token not found"}` |
+
+So this was never a key problem and never a transient one: `/api/developer/v2`
+has no route left to serve. Sources: CryptoPanic's own responses above;
+`https://dlthub.com/context/source/cryptopanic` ("the free Developer plan was
+discontinued in early 2026", base URL `https://cryptopanic.com/api/API_PLAN/v2/`);
+`https://github.com/tigusigalpa/cryptopanic-go` ("The free Developer API plan
+was discontinued"). This closes the open question in API_DEVIATIONS.md ("check
+the account page, not the docs").
+
+**Decision.**
+
+1. `endpoints.cryptopanic` moves to `https://cryptopanic.com/api/growth/v2`,
+   the lowest plan whose route still exists. The plan segment is config, so
+   an Enterprise key is a one-line change.
+2. `public=true` is sent with the token: the non-personalised feed is the
+   documented mode for an application.
+3. A failure now says which failure it is, instead of one generic warning:
+   `cryptopanic_endpoint_not_found` (404 — the plan segment has no route),
+   `cryptopanic_auth_rejected` (400/401/403 — the route refused the key; note
+   that CryptoPanic answers an unknown key with 400, not 401), and
+   `cryptopanic_unavailable` for anything else. Each carries the redacted
+   endpoint and an `action` field. `base.redact_url` and `scrub_secrets` are
+   applied on both paths, so no message can carry the token.
+4. RSS is unchanged and remains the fallback. It is worth being explicit that
+   `news_item` was **not** empty: the same run wrote 75 RSS rows. What was
+   missing was CryptoPanic's contribution, and — because CryptoPanic carries a
+   real `published_at` — nothing about the lag measurement was lost either.
+
+**What this does not do.** It cannot produce a successful fetch by itself. The
+account needs a plan whose route exists. Until then the hourly log carries one
+actionable line per hour instead of a silent 404, and the verification is one
+command the owner can run:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  'https://cryptopanic.com/api/growth/v2/posts/?auth_token=YOUR_TOKEN&public=true'
+# 200 -> the plan matches the key; the collector will fill news_item
+# 400 -> "Token not found" or a plan mismatch; check the plan on the account page
+# 404 -> the plan segment in endpoints.cryptopanic has no route
+```
+
+If no paid plan is wanted, unset `CRYPTOPANIC_AUTH_TOKEN`: the collector then
+logs `cryptopanic_skipped` once and runs on RSS alone, with no hourly warning.
+
+**Tests.** `tests/test_news_cryptopanic.py` drives success, 404, 400/401/403, a
+network error and a malformed payload through an `httpx.MockTransport`, asserts
+the token appears in no warning, and pins that the shipped endpoint is not the
+removed `developer` route.
+
+## D-083 — The 100% holder readings are a frozen source, not a formula fault
+
+**Date:** 2026-09-19 · **Status:** accepted
+
+On the 2026-09-19 screen, 261 of 526 assets failed `L1_HOLDER_CONC` and 34 of
+them read ≥ 95%, twelve at exactly 100%. Two causes were suspected: the
+`kept / (1 − excluded)` formula, and unlabelled exchange wallets counting as
+whales. The audit was run on the committed public JSON plus live GoPlus reads
+and public explorers — no database. Every published value reproduced from a
+live read, so the audit is measuring the same thing the screen measured.
+
+**The formula is not the cause, and the arithmetic says why.** Let K be the
+kept top-10 share, E the excluded share and T everything held outside the top
+10. Then `1 − E = K + T`, so
+
+    effective = K / (1 − E) = K / (K + T)
+
+The denominator is not a lever: moving a holder into the excluded set moves its
+share out of K and leaves T alone, so an exclusion can only *lower* the result.
+What drives it to 100% is **T → 0**: the visible top 10 holding essentially all
+supply. SFP is the clean example (Ethereum, 831 holders, GoPlus agreeing with
+Blockscout's 827): raw top-10 99.93%, T = 0.07%, E = 60.8% (three tagged
+exchange wallets), K = 39.1%, giving 99.82%. That is a real reading. One
+untagged EOA with 4 transactions holds 34.8% of this chain's supply
+(`https://etherscan.io/address/0x7c7dd26c3fd211b53888daf7f8cf0ade9be2ef3f`).
+The check is doing its job.
+
+**The real cause of the 100% readings: GoPlus serves a frozen holder list.**
+For twelve assets the whole list is 1–6 holders, which covers the supply by
+construction and therefore reads 100% whatever the formula. Checked against
+Blockscout the same day:
+
+| asset | GoPlus holders | live holders | live raw top-10 |
+|---|---:|---:|---:|
+| AZTEC | 2 | 14,913 | **36.4%** |
+| ENSO | 3 | 5,667 | **42.7%** |
+| SENT | 29 | 3,668 | 82.8% |
+| BASED | 1 | 3,739 | 83.9% |
+| BILL | 1 | 1,617 | 90.6% |
+| ROBO | 1 | 18,570 | 92.0% |
+| POWER | 1 | 1,459 | 92.0% |
+| ERA | 2 | 18,948 | 93.2% |
+| BSB | 1 | 25,761 | 96.3% |
+| DOS | 1 | 3,003 | 97.0% |
+| HEMI | 1 | 1,757 | 99.5% |
+| AT (BSC), ZEST (BSC) | 6, 1 | no Blockscout instance | — |
+
+AZTEC and ENSO were disqualified at 100% while their live top 10 is 36% and
+43%: well under the 60% threshold. Lists that GoPlus reports accurately sit far
+higher (Q 203 against 205, JCT 520 against 515, RIVER 3,701 against 3,713).
+
+**Decision.**
+
+1. **A holder list shorter than `holders.min_goplus_holder_count` (50) is not a
+   measurement.** The row is written with `top10_share = NULL` and
+   `data_quality = 'stale_holder_list'`, keeping `top10_share_raw` for the
+   audit trail. Layer 1 then fails the asset as `data_unavailable`, stating the
+   reason. **The kill switch is not weakened**: every one of the thirteen
+   affected assets still fails, and an unmeasured asset can never pass. What
+   changes is that the screen stops publishing 100% as if it were a fact.
+2. **A non-excluded float below `holders.min_measurable_float` (0.05) is not
+   judged** (`insufficient_float`, also a `data_unavailable` FAIL). `K/(K+T)`
+   over a sliver reads any ordinary wallet as control of the token. No audited
+   asset was near this bound — the smallest float was SFP's 39.2% — so it
+   changes nothing today and exists so the sliver case cannot be silently
+   scored later.
+3. **Five sourced exchange wallets are added to `excluded_addresses.yaml`**,
+   each with its explorer tag URL: Bitget 35 on Ethereum (kept in NAORIS's top
+   10 at 2.30%, already excluded on BSC), Binance 73 on Base (MIRA, 2.46%),
+   Binance: Withdrawals 7 and Indodax 3 on BSC (EDEN, 5.05% and 1.38%), and
+   Gate Deposit on Bitlayer (BTR, 1.40%).
+
+**The exchange-wallet hypothesis was mostly not supported.** Every non-excluded
+top holder ≥ 1% across the 34 assets was checked on Etherscan, BaseScan or
+BscScan. Only five carried an exchange tag (above). The rest are untagged
+vesting contracts, Safes, treasuries and EOAs with a handful of transactions —
+i.e. the one-party pattern the check exists for (RAVE: 9 wallets, ~95%). Those
+five exclusions move the affected assets by 0.2–2 points; none changes a
+verdict.
+
+**Before and after, on the 34 assets failing at ≥ 95%:** 13 become
+`FAIL (data_unavailable: frozen, too-short holder list)`, 21 keep a numeric
+reading within ±0.02 of what was published, and **all 34 still fail**. Coverage
+for the check falls from 65.2% to roughly 63%, far above the 20% floor that
+would darken it.
+
+**Limits, recorded rather than hidden.**
+- Solana readings (WET, SONIC) are token accounts, not owners, and exchange
+  accounts there are not labelled by any free source we use.
+- BscScan and Snowtrace block automated reads, so BSC and Avalanche contract
+  holders could not be name-checked; BSC EOAs were checked on Etherscan under
+  the existing rule that an EOA is the same owner on every EVM chain.
+- Some assets are measured on a chain that holds only part of their supply
+  (SFP: 200M of a 500M total on Ethereum). The reading is honest about that
+  chain and is not the whole token.
+
+**Next step, not taken here.** Blockscout already gives an accurate holder list
+on Ethereum and Base and is already called for contract names. Using it as a
+fallback when GoPlus is frozen would turn thirteen `data_unavailable` results
+back into measurements — and, on today's data, would likely clear AZTEC and
+ENSO. That is a new source path and belongs in its own decision.
+
+**Tests.** `tests/test_holder_audit.py` pins the identity
+`K/(1−E) = K/(K+T)`, that an exclusion can only lower the share, the AZTEC
+frozen list (100% without the guard, unmeasured with it), the SFP reading
+(still 99.82%, still a fail), the tiny-float guard, a RAVE-shaped token still
+failing, the Layer 1 reasons, and that every curated address carries a label, a
+category, a source URL and a date.

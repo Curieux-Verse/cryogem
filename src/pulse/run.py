@@ -26,7 +26,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.config import get_config
@@ -171,6 +171,29 @@ def build_rows(
     return rows
 
 
+#: Sparklines are drawn only for the newest hour and read for the one before it
+#: (the bake). Kept on every row they cost ~1.8KB x ~160 rows an hour -- about
+#: 2.5GB of Turso storage a year for pictures nobody can see again. Hours in
+#: this band have them stripped; bar_1h still holds every price they came from.
+#: The band is a week, not a couple of hours: hourly runs then touch ~160 rows,
+#: while a gap (a day of failed runs) is still cleaned up when they resume.
+SPARK_KEEP_HOURS = 2
+SPARK_PRUNE_BAND_HOURS = 168
+
+
+def prune_sparklines(db: Database, stamp: datetime) -> int:
+    """Strip spark arrays from pulse_result rows 2..12 hours old. Returns rows touched."""
+    newest_old = format_instant(stamp - timedelta(hours=SPARK_KEEP_HOURS))
+    oldest = format_instant(stamp - timedelta(hours=SPARK_PRUNE_BAND_HOURS))
+    return db.execute(
+        "UPDATE pulse_result SET features = "
+        "json_remove(features, '$.spark_1h', '$.flow_1h', '$.spark_4h') "
+        "WHERE ts_utc < ? AND ts_utc >= ? AND features IS NOT NULL "
+        "AND json_extract(features, '$.spark_1h') IS NOT NULL",
+        (newest_old, oldest),
+    )
+
+
 async def run_pulse(as_of: datetime | None = None) -> dict[str, Any]:
     """Score one closed hour. Returns a summary; summary['ok'] drives the exit code."""
     from src.pulse.data import BinancePulseCollector, hour_floor
@@ -210,6 +233,7 @@ async def run_pulse(as_of: datetime | None = None) -> dict[str, Any]:
 
     with get_db() as db:
         upsert(db, "pulse_result", rows)
+        summary["sparks_pruned"] = prune_sparklines(db, stamp)
     summary.update(
         ok=True,
         universe=len(rows),
@@ -247,4 +271,12 @@ async def run_pulse(as_of: datetime | None = None) -> dict[str, Any]:
     return summary
 
 
-__all__ = ["PULSE_TABLES", "build_rows", "ensure_pulse_tables", "read_gem_ranks", "run_pulse", "sparklines"]
+__all__ = [
+    "PULSE_TABLES",
+    "build_rows",
+    "ensure_pulse_tables",
+    "prune_sparklines",
+    "read_gem_ranks",
+    "run_pulse",
+    "sparklines",
+]

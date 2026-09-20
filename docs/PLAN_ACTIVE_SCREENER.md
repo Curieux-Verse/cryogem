@@ -1,6 +1,17 @@
 # Plan: from a daily snapshot to an active screener
 
-**Status:** draft for decision · **Written:** 2026-09-19 · **Owner:** repo owner
+**Status:** IMPLEMENTED 2026-09-20 (D-074..D-083) · **Written:** 2026-09-19 · **Owner:** repo owner
+
+> **What the owner decided, and where this document is now stale.** Pulse,
+> including OI as a confirmation-and-penalty conditioner, was approved (D-074).
+> Section 4.1 below proposed a neutral fill of 50 for a missing block: that was
+> **rejected** — "don't let missing data score anything" — and the shipped rule
+> is that a live block counts for every asset and an unmeasured one earns 0
+> (D-075). The kill criteria in section 7 were **not implemented**: the Pulse
+> journal and its report exist, and no code zeroes a weight on its own.
+> LunarCrush stays unpaid, so the attention block is dark and drops out for
+> everyone. The hourly cron slot was left where it is; Pulse scores the last
+> CLOSED hour, so the minute it fires does not matter.
 **Scope:** everything needed so the screen visibly responds to the market within the hour, without giving up the rules that make its output trustworthy.
 
 Already shipped on branch `fix/supply-metrics-and-mappings` (D-071, D-072, D-073), so they're not repeated as work items below:
@@ -85,7 +96,7 @@ This keeps the TRB lesson as a penalty. It also avoids the trap where "negative 
 
 | # | Change | Why | Done when |
 |---|---|---|---|
-| 0.1 | **Coverage-aware scoring.** A missing block scores a neutral 50 instead of dropping out; publish `coverage` (weight measured ÷ weight total) per asset. Apply the same rule *inside* blocks. | Stops missing data being rewarded. Simulated on 09-19 data: the top 15 becomes COMP, RUNE, FLOW, AR, RPL, EIGEN, ICP, ETHFI, POL… and no longer only 2-block coins. | A test shows a 2-block asset cannot outrank an otherwise identical 5-block asset on missing weight alone |
+| 0.1 | **Coverage-honest scoring (as shipped, D-075).** A live block counts for every asset and a missing reading earns 0; a block measured for almost nobody is dark and drops out for everyone; publish `coverage` per asset. Same rule inside blocks. | Stops missing data being rewarded. Simulated on 09-19 data: the top 15 becomes COMP, RUNE, FLOW, AR, RPL, EIGEN, ICP, ETHFI, POL… and no longer only 2-block coins. | A test shows a 2-block asset cannot outrank an otherwise identical 5-block asset on missing weight alone |
 | 0.2 | **`score_version`** on `layer2_result` and `journal_entry` (additive column) | Methodology changes (D-071/072/073, 0.1, 5.3) must split journal cohorts, never blend them | `journal --report` groups by version |
 | 0.3 | **Attention source.** Choose one: (a) pay LunarCrush; (b) substitute a free proxy; (c) set weight to 0 until a source exists | 15 points of weight are currently distributed as noise | Block measured for >60% of survivors, or weight 0 with a D-note |
 | 0.4 | **CryptoPanic `404`** on `/api/developer/v2/posts/` every hour | News labels are empty; path or plan tier mismatch | One successful hourly fetch |
@@ -187,9 +198,7 @@ Momentum and drawdown (reversal) deliberately pull in opposite directions. The l
   - Entry price: the **next** 1H open, never the signal bar.
   - Control: a random survivor at the same hour.
   - Horizons: 4h, 24h, 72h from `bar_1h`, reporting return, versus BTC, and max adverse and favourable excursion.
-- **Stated in advance, before any data:**
-  - After **200 events**, the Pulse top decile must beat its control on median 24h return by more than round-trip costs (10 bp taker ×2 plus slippage).
-  - If it doesn't, the Gem MOMENTUM/FLOW weight goes to 0 and Pulse is labelled "observational". Writing this down now is what stops the result being argued away later.
+- **Not implemented, by the owner's decision:** the pre-stated kill criteria. `pulse report` prints the top decile against its control per horizon and score version, and the decision about what to do with that stays a human one.
 - **Versioning:** every weight above is locked when it ships. Changes get a D-number and a new `score_version`, never an edit in place.
 
 ---

@@ -511,3 +511,38 @@ class TestCli:
         assert "unavailable" in res.output
         res = CliRunner().invoke(cli.app, ["pulse", "report"])
         assert res.exit_code == 0 and "No completed forward returns" in res.output
+
+
+class TestSparklinePruning:
+    """Sparklines are drawn once. Kept forever they are ~2.5GB of Turso a year."""
+
+    def _row(self, db, ts: str, spark: bool) -> None:
+        features = {"flow_24h": 0.1}
+        if spark:
+            features |= {"spark_1h": [1.0, 2.0], "flow_1h": [0.1], "spark_4h": [1.5]}
+        upsert(db, "pulse_result", [{
+            "ts_utc": ts, "base_asset": "AAA", "score": 70.0, "rank": 1,
+            "universe_size": 1, "features": json_dump(features), "aligned": 0,
+            "fetched_at_utc": ts,
+        }])
+
+    def test_only_hours_older_than_the_keep_window_lose_their_sparks(self, db):
+        from src.pulse.run import prune_sparklines
+
+        now = datetime(2026, 9, 19, 14, tzinfo=timezone.utc)
+        for hours in (0, 1, 3, 200):
+            self._row(db, format_instant(now - timedelta(hours=hours)), spark=True)
+
+        assert prune_sparklines(db, now) == 1, "only the 3h-old row is in the band"
+        kept = {
+            r["ts_utc"]: json.loads(r["features"])
+            for r in db.query("SELECT ts_utc, features FROM pulse_result")
+        }
+        assert "spark_1h" in kept[format_instant(now)]
+        assert "spark_1h" in kept[format_instant(now - timedelta(hours=1))]
+        assert "spark_1h" not in kept[format_instant(now - timedelta(hours=3))]
+        # Outside the band, and past evidence is never rewritten in bulk.
+        assert "spark_1h" in kept[format_instant(now - timedelta(hours=200))]
+        # The rest of the row survives, and a second pass is a no-op.
+        assert kept[format_instant(now - timedelta(hours=3))]["flow_24h"] == 0.1
+        assert prune_sparklines(db, now) == 0

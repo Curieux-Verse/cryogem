@@ -148,6 +148,8 @@ export interface JournalEntry {
   is_control: boolean;
   price_at_signal: number;
   btc_price_at_signal: number;
+  /** The method that ranked this entry (D-076). Older files carry none. */
+  score_version?: string;
   returns: Record<
     string,
     {
@@ -163,7 +165,11 @@ export interface Journal {
   schema_version: number;
   generated_at_utc: string;
   horizons: string[];
+  /** D-076: the scoring method `statistics` describes. Absent in older files. */
+  score_version?: string;
   statistics: Record<string, HorizonStats>;
+  /** Every cohort, keyed by scoring method. Never blended into one number. */
+  statistics_by_version?: Record<string, Record<string, HorizonStats>>;
   first_entry_date: string | null;
   coverage_note: string;
   entries: JournalEntry[];
