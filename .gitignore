@@ -69,3 +69,4 @@ pat.txt
 # Agent worktrees and local Claude Code state. Never committed: the worktrees
 # are full checkouts of this repo.
 .claude/
+data/public/pulse_journal.json

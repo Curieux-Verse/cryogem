@@ -351,33 +351,42 @@ def pulse_run_command(
 
 @pulse_app.command("bake")
 def pulse_bake_command() -> None:
-    """Write data/public/pulse.json from the newest pulse_result hour.
+    """Write data/public/pulse.json and pulse_journal.json for the dashboard.
 
-    Always leaves a file: 'unavailable' when there is no fresh hour (exit 0,
-    a legitimate state) or the database cannot be read (exit 1).
+    Always leaves both files: 'unavailable' when there is no fresh hour (exit 0,
+    a legitimate state) or the database cannot be read (exit 1). The journal
+    file is baked beside the ranking so the receipts page can never be newer
+    or older than the scores it reports on.
     """
     from src.config import get_config
     from src.db.connection import get_db
-    from src.pulse.publish import bake_pulse_json
+    from src.pulse.publish import bake_pulse_journal_json, bake_pulse_json
 
     cfg = get_config()
     out_dir = cfg.path(cfg.settings.reporting.public_json_dir)
     try:
         with get_db() as db:
             path = bake_pulse_json(db, out_dir)
-    except Exception as exc:  # noqa: BLE001 - the file already says "unavailable"
-        # A failed connection never reached bake_pulse_json, and a file left
-        # from an earlier bake would ship stale data as "ok": overwrite it.
-        try:
-            bake_pulse_json(None, out_dir)
-        except Exception:  # noqa: BLE001 - expected: it re-raises by design
-            pass
+            journal_path = bake_pulse_journal_json(db, out_dir)
+    except Exception as exc:  # noqa: BLE001 - the files already say "unavailable"
+        # A failed connection never reached the bakers, and a file left from an
+        # earlier bake would ship stale data as "ok": overwrite both.
+        for baker in (bake_pulse_json, bake_pulse_journal_json):
+            try:
+                baker(None, out_dir)
+            except Exception:  # noqa: BLE001 - expected: they re-raise by design
+                pass
         typer.secho(f"pulse bake: unavailable ({type(exc).__name__})", fg=typer.colors.RED)
         raise typer.Exit(code=1) from exc
     import json
 
     status = json.loads(path.read_text(encoding="utf-8"))["status"]
+    journal_payload = json.loads(journal_path.read_text(encoding="utf-8"))
     typer.echo(f"wrote {path} (status {status})")
+    typer.echo(
+        f"wrote {journal_path} ({journal_payload['entries_total']} entries, "
+        f"{journal_payload['entries_with_returns']} with returns)"
+    )
 
 
 @pulse_app.command("report")

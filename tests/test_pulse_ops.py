@@ -513,6 +513,111 @@ class TestCli:
         assert res.exit_code == 0 and "No completed forward returns" in res.output
 
 
+class TestJournalBake:
+    """pulse_journal.json: the receipts page's only input (D-081)."""
+
+    def _with_entries(self, db):
+        prev = _hour(db, TS_PREV, ASSETS)
+        cur = _hour(db, TS0, ["A15"] + ASSETS[:15] + ASSETS[16:], aligned={"A15"})
+        journal.write_entries(db, TS0, cur, prev)
+        db.commit()
+
+    def test_entries_and_the_control_are_all_published(self, db, tmp_path):
+        self._with_entries(db)
+        path = pulse_publish.bake_pulse_journal_json(db, tmp_path)
+        doc = json.loads(path.read_text(encoding="utf-8"))
+
+        assert path.name == "pulse_journal.json"
+        assert doc["status"] == "ok"
+        assert doc["entries_total"] == 3 and doc["entries_shown"] == 3
+        assert doc["entries_with_returns"] == 0, "no horizon has elapsed"
+        assert doc["horizons"] == ["4h", "24h", "72h"]
+        assert doc["min_for_conclusion"] == pulse_publish.JOURNAL_MIN_FOR_CONCLUSION
+        assert doc["score_version"] == "pulse-v1"
+        assert doc["first_entry_utc"] == "2026-09-19T14:00:00Z"
+
+        triggers = sorted(e["trigger"] for e in doc["entries"])
+        assert triggers == ["aligned", "control", "top10"], "the control is never dropped"
+        entry = next(e for e in doc["entries"] if e["trigger"] == "aligned")
+        assert set(entry) == {
+            "entry_id", "ts_signal_utc", "asset", "trigger", "is_control", "pulse_score",
+            "pulse_rank", "gem_rank", "state_4h", "score_version", "returns", "file",
+        }
+        assert entry["asset"] == "A15" and entry["is_control"] is False
+        assert entry["file"] == "assets/A15.json"
+        assert entry["returns"] == {}
+        # Nothing can be concluded yet, and the note says how far short it is.
+        assert doc["statistics"] == {}
+        assert "3 entries recorded, 0 with" in doc["coverage_note"]
+
+    def test_completed_returns_reach_the_statistics_by_trigger(self, db, tmp_path):
+        self._with_entries(db)
+        rows = db.query("SELECT entry_id, trigger FROM pulse_journal")
+        upsert(db, "pulse_forward_return", [
+            {
+                "entry_id": r["entry_id"], "horizon": "4h", "entry_ts_utc": TS0,
+                "entry_price": 100.0, "exit_price": 104.0,
+                "return_raw": 0.04 if r["trigger"] != "control" else 0.01,
+                "return_vs_btc": 0.02 if r["trigger"] != "control" else -0.01,
+                "max_favourable": 0.05, "max_adverse": -0.01,
+                "computed_at_utc": TS0,
+            }
+            for r in rows
+        ])
+        db.commit()
+        doc = json.loads(
+            pulse_publish.bake_pulse_journal_json(db, tmp_path).read_text(encoding="utf-8")
+        )
+        assert doc["entries_with_returns"] == 3
+        stats = doc["statistics"]["pulse-v1"]
+        assert set(stats) == {"aligned", "top10", "control"}
+        assert stats["aligned"]["4h"]["n"] == 1
+        assert stats["aligned"]["4h"]["vs_btc"]["median"] == pytest.approx(0.02)
+        # The edge is stated against the control, never on its own.
+        assert stats["aligned"]["4h"]["vs_control"]["median_difference"] == pytest.approx(0.03)
+        assert "vs_control" not in stats["control"]["4h"]
+        assert doc["entries"][0]["returns"]["4h"]["return_vs_btc"] is not None
+
+    def test_an_empty_journal_says_why_rather_than_looking_broken(self, db, tmp_path):
+        doc = json.loads(
+            pulse_publish.bake_pulse_journal_json(db, tmp_path).read_text(encoding="utf-8")
+        )
+        assert doc["status"] == "ok" and doc["entries"] == []
+        assert doc["entries_total"] == 0 and doc["first_entry_utc"] is None
+        assert "ENTERS" in doc["coverage_note"]
+
+    def test_database_error_still_writes_unavailable_then_raises(self, tmp_path):
+        with pytest.raises(RuntimeError):
+            pulse_publish.bake_pulse_journal_json(None, tmp_path)
+        doc = json.loads((tmp_path / "pulse_journal.json").read_text(encoding="utf-8"))
+        assert doc["status"] == "unavailable" and doc["entries"] == []
+        assert set(doc) == set(pulse_publish.journal_unavailable_payload())
+
+    def test_the_visible_list_is_bounded_but_the_count_is_not(self, db, tmp_path, monkeypatch):
+        monkeypatch.setattr(pulse_publish, "JOURNAL_ENTRIES_SHOWN", 2)
+        self._with_entries(db)
+        doc = json.loads(
+            pulse_publish.bake_pulse_journal_json(db, tmp_path).read_text(encoding="utf-8")
+        )
+        assert doc["entries_total"] == 3, "the append-only table is never under-reported"
+        assert doc["entries_shown"] == 2 and len(doc["entries"]) == 2
+
+    def test_bake_writes_both_files(self, db, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from src import cli
+        from src.config import get_config
+
+        self._with_entries(db)
+        cfg = get_config()
+        monkeypatch.setattr(type(cfg), "path", lambda self, p: tmp_path / "public")
+        res = CliRunner().invoke(cli.app, ["pulse", "bake"])
+        assert res.exit_code == 0, res.output
+        assert (tmp_path / "public" / "pulse.json").exists()
+        assert (tmp_path / "public" / "pulse_journal.json").exists()
+        assert "3 entries" in res.output
+
+
 class TestSparklinePruning:
     """Sparklines are drawn once. Kept forever they are ~2.5GB of Turso a year."""
 

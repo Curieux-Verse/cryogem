@@ -2768,6 +2768,23 @@ this report.
   direction that flatters Pulse. The daily journal's delisted exit (D-061) is
   not yet mirrored here.
 
+**Published, 2026-09-20.** The record was readable only from the CLI, which in
+practice means never read. `pulse bake` now writes `data/public/pulse_journal.json`
+beside `pulse.json` — same step, so the receipts can never be a different age
+than the scores they report on — and the dashboard's receipts page shows it
+below the Gem journal, as a separate record with its own clock. It carries the
+statistics per trigger and horizon (`aligned`, `top10`, `control`, each with
+its difference against the control), every entry with its returns including
+the losers, and `coverage_note` when there is nothing to conclude yet. Three
+rules carried over from the daily journal deliberately:
+* the same gate — below `min_for_conclusion` (30) completed returns the page
+  prints n and the shortfall, never a partial figure;
+* the control is published, never dropped, so no edge is quoted on its own;
+* the file is a bounded newest-first window (`JOURNAL_ENTRIES_SHOWN`) of an
+  append-only table, and `entries_total` always states the true count, so
+  trimming the page can never under-report the record.
+The page states that Pulse is observational: nothing on it changes a weight.
+
 ## D-082 — The CryptoPanic 404 is a removed plan route, not a bad key
 
 **Date:** 2026-09-19 · **Status:** accepted

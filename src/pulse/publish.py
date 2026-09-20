@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.config import get_config
 from src.db.connection import Database
 from src.db.writes import json_load
 from src.logging_setup import get_logger
@@ -145,6 +146,149 @@ def build_pulse(db: Database, now: datetime | None = None) -> dict[str, Any]:
     }
 
 
+JOURNAL_FILE_NAME = "pulse_journal.json"
+
+#: Entries carried into the page, newest first. The journal is append-only and
+#: grows by ~24 entries a day, so the FILE is bounded while the TABLE is not:
+#: every statistic above is computed over all of it, and only the visible list
+#: is trimmed. `entries_total` always says how many exist.
+JOURNAL_ENTRIES_SHOWN = 500
+
+#: Completed returns before the page draws any conclusion, matching the daily
+#: journal's gate. Published so the page cannot quietly use a smaller one.
+JOURNAL_MIN_FOR_CONCLUSION = 30
+
+
+def journal_unavailable_payload(reason: str | None = None) -> dict[str, Any]:
+    """The full shape, empty, when the journal cannot be read."""
+    if reason:
+        log.warning("pulse_journal_unavailable", reason=reason)
+    return {
+        "schema_version": PULSE_JSON_SCHEMA_VERSION,
+        "status": "unavailable",
+        "generated_at_utc": utc_now_iso(),
+        "score_version": None,
+        "horizons": [],
+        "min_for_conclusion": JOURNAL_MIN_FOR_CONCLUSION,
+        "entries_total": 0,
+        "entries_with_returns": 0,
+        "entries_shown": 0,
+        "first_entry_utc": None,
+        "coverage_note": "The Pulse journal could not be read.",
+        "statistics": {},
+        "entries": [],
+    }
+
+
+def _journal_coverage_note(total: int, with_returns: int, horizons: list[str]) -> str:
+    """Says how far short it is, rather than shrugging (the daily journal's rule)."""
+    if total == 0:
+        return (
+            "No Pulse entries yet. An entry is written when an asset ENTERS the "
+            "Pulse top 10 or ALIGNED, so the first scored hour writes none."
+        )
+    longest = horizons[-1] if horizons else "72h"
+    return (
+        f"{total} entries recorded, {with_returns} with at least one completed "
+        f"return. A return is filled only once every bar in its window exists, "
+        f"so the newest entries wait up to {longest} for their last horizon."
+    )
+
+
+def build_pulse_journal(db: Database) -> dict[str, Any]:
+    """The pulse_journal.json payload: statistics, then every entry with its returns.
+
+    Includes the losers and the control, for the same reason the daily journal
+    does: a forward-return list with the bad entries removed is not a record,
+    it is marketing. `pulse_journal` is append-only in the database, so this
+    file cannot show a curated subset of it -- only a bounded, newest-first
+    window of a list nothing can delete from.
+    """
+    from src.report.publish import _safe_name
+
+    horizons = [
+        journal.horizon_label(h)
+        for h in get_config().thresholds.pulse.journal_horizons_hours
+    ]
+    entries = db.query(
+        "SELECT entry_id, ts_signal_utc, base_asset, trigger, is_control, pulse_score, "
+        "pulse_rank, gem_rank, state_4h, score_version FROM pulse_journal "
+        "ORDER BY ts_signal_utc DESC, is_control, pulse_rank"
+    )
+    returns = db.query(
+        "SELECT entry_id, horizon, return_raw, return_vs_btc, max_favourable, max_adverse "
+        "FROM pulse_forward_return"
+    )
+    by_entry: dict[str, dict[str, Any]] = {}
+    for row in returns:
+        by_entry.setdefault(row["entry_id"], {})[row["horizon"]] = {
+            "return_raw": row["return_raw"],
+            "return_vs_btc": row["return_vs_btc"],
+            "max_favourable": row["max_favourable"],
+            "max_adverse": row["max_adverse"],
+        }
+
+    shown = [
+        {
+            "entry_id": e["entry_id"],
+            "ts_signal_utc": _iso_z(e["ts_signal_utc"]),
+            "asset": e["base_asset"],
+            "trigger": e["trigger"],
+            "is_control": bool(e["is_control"]),
+            "pulse_score": e["pulse_score"],
+            "pulse_rank": e["pulse_rank"],
+            "gem_rank": e["gem_rank"],
+            "state_4h": e["state_4h"],
+            "score_version": e["score_version"],
+            "returns": by_entry.get(e["entry_id"], {}),
+            "file": f"assets/{_safe_name(e['base_asset'])}.json",
+        }
+        for e in entries[:JOURNAL_ENTRIES_SHOWN]
+    ]
+    with_returns = sum(1 for e in entries if e["entry_id"] in by_entry)
+    return {
+        "schema_version": PULSE_JSON_SCHEMA_VERSION,
+        "status": "ok",
+        "generated_at_utc": utc_now_iso(),
+        "score_version": get_config().thresholds.pulse.score_version,
+        "horizons": horizons,
+        "min_for_conclusion": JOURNAL_MIN_FOR_CONCLUSION,
+        "entries_total": len(entries),
+        "entries_with_returns": with_returns,
+        "entries_shown": len(shown),
+        "first_entry_utc": _iso_z(entries[-1]["ts_signal_utc"]) if entries else None,
+        "coverage_note": _journal_coverage_note(len(entries), with_returns, horizons),
+        # {score_version: {trigger: {horizon: block}}}, exactly `pulse report`.
+        "statistics": journal.pulse_report(db)["versions"],
+        "entries": shown,
+    }
+
+
+def bake_pulse_journal_json(db: Database | None, out_dir: Path) -> Path:
+    """Write out_dir/pulse_journal.json. A database error still writes 'unavailable'."""
+    from src.report.publish import _write
+
+    error: Exception | None = None
+    try:
+        if db is None:
+            raise RuntimeError("no database")
+        payload = build_pulse_journal(db)
+    except Exception as exc:  # noqa: BLE001 - the page must still say "unavailable"
+        error = exc
+        payload = journal_unavailable_payload(f"{type(exc).__name__}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _write(out_dir, JOURNAL_FILE_NAME, payload)
+    log.info(
+        "pulse_journal_baked",
+        status=payload["status"],
+        entries=payload["entries_total"],
+        with_returns=payload["entries_with_returns"],
+    )
+    if error is not None:
+        raise error
+    return out_dir / JOURNAL_FILE_NAME
+
+
 def bake_pulse_json(db: Database | None, out_dir: Path, now: datetime | None = None) -> Path:
     """Write out_dir/pulse.json. A database error still writes 'unavailable'.
 
@@ -169,4 +313,15 @@ def bake_pulse_json(db: Database | None, out_dir: Path, now: datetime | None = N
     return out_dir / FILE_NAME
 
 
-__all__ = ["FILE_NAME", "STALE_AFTER", "bake_pulse_json", "build_pulse", "unavailable_payload"]
+__all__ = [
+    "FILE_NAME",
+    "JOURNAL_FILE_NAME",
+    "JOURNAL_MIN_FOR_CONCLUSION",
+    "STALE_AFTER",
+    "bake_pulse_journal_json",
+    "bake_pulse_json",
+    "build_pulse",
+    "build_pulse_journal",
+    "journal_unavailable_payload",
+    "unavailable_payload",
+]
