@@ -39,9 +39,10 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
 
-from src.collectors.base import BaseCollector
+from src.collectors.base import BaseCollector, PermanentHTTPError, redact_url
 from src.db.connection import get_db
 from src.db.writes import json_dump, upsert
+from src.logging_setup import scrub_secrets
 from src.timeutil import parse_instant, utc_now, utc_now_iso
 
 #: Free RSS feeds. No key, and they carry a real published date -- which the
@@ -160,24 +161,9 @@ class NewsCollector(BaseCollector):
 
         token = self.config.secrets.cryptopanic_auth_token
         if token:
-            try:
-                base = self.config.settings.endpoints["cryptopanic"]
-                async with self.client(base) as client:
-                    payload = await self.request_json(
-                        client, "GET", "/posts/", params={"auth_token": token}
-                    )
-                for post in payload.get("results", []):
-                    items.append(
-                        {
-                            "title": post.get("title"),
-                            "url": post.get("url"),
-                            "published_raw": post.get("published_at"),
-                            "source_name": (post.get("source") or {}).get("title", "CryptoPanic"),
-                            "iso_date": True,
-                        }
-                    )
-            except Exception as exc:  # noqa: BLE001
-                self.warn("cryptopanic_unavailable", error=str(exc)[:150])
+            items.extend(await self._fetch_cryptopanic(token))
+        else:
+            self.log.info("cryptopanic_skipped", reason="CRYPTOPANIC_AUTH_TOKEN not set")
 
         # RSS is the fallback AND the lag instrument: unlike the Binance CMS
         # endpoint, these feeds still publish a real timestamp.
@@ -189,6 +175,87 @@ class NewsCollector(BaseCollector):
                     items.extend(_parse_rss(response.text, source_name))
                 except Exception as exc:  # noqa: BLE001
                     self.warn("rss_feed_unavailable", source=source_name, error=str(exc)[:120])
+        return items
+
+    async def _fetch_cryptopanic(self, token: str) -> list[dict[str, Any]]:
+        """One page of CryptoPanic posts, or [] with a warning that says why.
+
+        The API is plan-scoped: `https://cryptopanic.com/api/<plan>/v2/posts/`.
+        The free Developer plan was discontinued in early 2026 and its route
+        removed, so `/api/developer/v2/posts/` answers 404 WITH OR WITHOUT a
+        token -- a missing route, not a bad key (D-082). Each failure gets its
+        own event so the log says what to do, instead of one generic warning
+        that reads like a flaky source.
+        """
+        base = self.config.settings.endpoints["cryptopanic"]
+        endpoint = redact_url(f"{base.rstrip('/')}/posts/")
+        try:
+            async with self.client(base) as client:
+                payload = await self.request_json(
+                    client,
+                    "GET",
+                    "posts/",
+                    # public=true: the non-personalised feed, the documented
+                    # mode for applications. The token is a query parameter by
+                    # the API's design; base.redact_url keeps it out of logs.
+                    params={"auth_token": token, "public": "true"},
+                )
+        except PermanentHTTPError as exc:
+            if exc.status_code == 404:
+                self.warn(
+                    "cryptopanic_endpoint_not_found",
+                    status=404,
+                    endpoint=endpoint,
+                    action=(
+                        "the plan segment in endpoints.cryptopanic has no route. The free "
+                        "Developer plan was discontinued (early 2026); set the base to the "
+                        "account's paid plan (/api/growth/v2 or /api/enterprise/v2), or unset "
+                        "CRYPTOPANIC_AUTH_TOKEN to run on RSS only. See D-082."
+                    ),
+                )
+            elif exc.status_code in (400, 401, 403):
+                self.warn(
+                    "cryptopanic_auth_rejected",
+                    status=exc.status_code,
+                    endpoint=endpoint,
+                    action=(
+                        "the route exists but refused the token (CryptoPanic answers 400 "
+                        "'Token not found' for an unknown key). Check that the key belongs to "
+                        "an active plan matching endpoints.cryptopanic. See D-082."
+                    ),
+                )
+            else:
+                self.warn("cryptopanic_unavailable", status=exc.status_code, endpoint=endpoint)
+            return []
+        except Exception as exc:  # noqa: BLE001 - one source must not sink the RSS fallback
+            # scrub_secrets as well as the redacted URLs: a network error from
+            # httpx can carry the full request URL, token included.
+            self.warn(
+                "cryptopanic_unavailable",
+                endpoint=endpoint,
+                error=scrub_secrets(f"{type(exc).__name__}: {exc}")[:150],
+            )
+            return []
+
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            self.warn("cryptopanic_unexpected_payload", endpoint=endpoint)
+            return []
+
+        items: list[dict[str, Any]] = []
+        for post in results:
+            if not isinstance(post, dict):
+                continue
+            items.append(
+                {
+                    "title": post.get("title"),
+                    "url": post.get("url"),
+                    "published_raw": post.get("published_at"),
+                    "source_name": (post.get("source") or {}).get("title", "CryptoPanic"),
+                    "iso_date": True,
+                }
+            )
+        self.log.info("cryptopanic_fetched", posts=len(items))
         return items
 
     def transform(self, raw: list[dict[str, Any]], as_of: datetime) -> list[dict[str, Any]]:

@@ -374,6 +374,19 @@ class HolderSettings(BaseModel):
     # balance as not-concentration: pools, escrows, stakes, bridges, vesting.
     exclude_contract_name_patterns: list[str]
     excluded_addresses_file: str
+    # D-083. A GoPlus holder list shorter than this is a frozen snapshot, not a
+    # measurement; and a non-excluded float below this share is too small to
+    # judge. Either records the asset as unmeasured, which Layer 1 fails.
+    min_goplus_holder_count: int
+    min_measurable_float: float
+
+    @model_validator(mode="after")
+    def _guards_in_range(self) -> "HolderSettings":
+        if self.min_goplus_holder_count < 0:
+            raise ValueError("min_goplus_holder_count must be >= 0")
+        if not 0 <= self.min_measurable_float < 1:
+            raise ValueError("min_measurable_float must be a share in [0, 1)")
+        return self
 
 
 # Circulating-supply history for net issuance. See DECISIONS.md D-072.

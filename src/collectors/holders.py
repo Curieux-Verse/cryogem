@@ -42,6 +42,10 @@
 #   * Chains without a Blockscout instance (BSC among them) get no contract
 #     names, so pooled contracts there count as holders -- conservative, and
 #     flagged names_unavailable.
+#   * GoPlus serves a FROZEN holder list for some tokens (holder_count 1-6 for
+#     tokens with thousands of live holders). Such a list reads 100% by
+#     construction, so it is recorded as stale_holder_list with no share
+#     (D-083), never as a measurement.
 # -----------------------------------------------------------------------------
 """
 
@@ -101,11 +105,30 @@ def measure(
     exclusions: dict[str, Any],
     name_patterns: list[str],
     names_available: bool,
+    *,
+    min_holder_count: int | None = None,
+    min_float: float | None = None,
 ) -> dict[str, Any]:
     """Raw and effective top-10 share for one GoPlus token_security entry.
 
     Shares are fractions of total supply; GoPlus uses 1 = 100%. `labels` maps
     (chain, address) to {"name", "implementation_name", "is_contract"}.
+
+    The effective share is K / (1 - E): kept top-10 over the supply that is not
+    excluded. Since 1 - E = K + T, where T is everything held outside the top
+    10, it equals K / (K + T). Excluding a holder only ever LOWERS it. It nears
+    100% when T nears 0, meaning the visible top 10 hold nearly all supply. That
+    is real concentration, unless the holder list itself is wrong (D-083). Two
+    guards return None ("cannot judge") instead of a number, and Layer 1 fails
+    an unmeasured asset as data_unavailable, so neither guard can pass one:
+
+      min_holder_count  GoPlus serves a FROZEN holder list for some tokens: 1-6
+                        holders where Blockscout shows 1,459-25,761 (AZTEC, 2
+                        against 14,913). A list that short covers the whole
+                        supply by construction, so it always reads 100%.
+      min_float         when almost all supply is excluded, the ratio describes
+                        a sliver, and a single ordinary wallet in it reads as
+                        control of the token.
     """
     holders = entry.get("holders") or []
     pairs = {normalise_address(d.get("pair"), chain) for d in entry.get("dex") or [] if d.get("pair")}
@@ -162,12 +185,24 @@ def measure(
     remaining = 1.0 - excluded
     effective: float | None = None
     top1: float | None = None
+    holder_count = _as_int(entry.get("holder_count"))
     if not holders:
         quality = "no_holders_returned"
+    elif (
+        min_holder_count is not None
+        and holder_count is not None
+        and holder_count < min_holder_count
+    ):
+        # The token's WHOLE holder list, as GoPlus sees it, has fewer entries
+        # than the floor. For a token that trades on Binance, that list is a
+        # snapshot from before distribution, not the current state (D-083).
+        quality = "stale_holder_list"
     elif remaining <= 0.0 or not kept:
         # Every visible top holder is excluded. There is no tradeable float in
         # view to measure, and inventing 0% would pass the asset on nothing.
         quality = "all_top_holders_excluded"
+    elif min_float is not None and remaining < min_float:
+        quality = "insufficient_float"
     else:
         effective = min(1.0, sum(kept) / remaining)
         top1 = min(1.0, max(kept) / remaining)
@@ -346,6 +381,8 @@ class HolderCollector(BaseCollector):
                 raw["exclusions"],
                 holders_cfg.exclude_contract_name_patterns,
                 names_available=bool(holders_cfg.blockscout_hosts.get(target.get("platform") or "")),
+                min_holder_count=holders_cfg.min_goplus_holder_count,
+                min_float=holders_cfg.min_measurable_float,
             )
             row.update(
                 top10_share=result["top10_share"],

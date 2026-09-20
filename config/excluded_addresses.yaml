@@ -121,6 +121,13 @@ addresses:
       label: "Paribu 14"
       source: "https://etherscan.io/address/0xc3681709ee476308b45812eabe0eb22f3b816880"
       added: "2026-09-14"
+    # D-083 audit (2026-09-19): already excluded on BSC, but kept in NAORIS's
+    # Ethereum top 10 (2.30%) because the Ethereum list lacked it.
+    - address: "0xffa8db7b38579e6a2d14f9b347a9ace4d044cd54"
+      category: cex
+      label: "Bitget 35"
+      source: "https://etherscan.io/address/0xffa8db7b38579e6a2d14f9b347a9ace4d044cd54"
+      added: "2026-09-19"
   "8453":
     - address: "0xf977814e90da44bfa03b6295a0616a897441acec"
       category: cex
@@ -132,6 +139,13 @@ addresses:
       label: "Bybit: Hot Wallet 6"
       source: "https://basescan.org/address/0xbaed383ede0e5d9d72430661f3285daa77e9439f"
       added: "2026-09-14"
+    # D-083 audit: kept in MIRA's Base top 10 (2.46%). BaseScan and Etherscan
+    # both tag it.
+    - address: "0x3304e22ddaa22bcdc5fca2269b418046ae7b566a"
+      category: cex
+      label: "Binance 73"
+      source: "https://basescan.org/address/0x3304e22ddaa22bcdc5fca2269b418046ae7b566a"
+      added: "2026-09-19"
   # BSC. BscScan blocks automated reads (HTTP 403), so each tag was read on
   # Etherscan instead: these are externally-owned wallets, and an EOA address
   # is the same key -- the same owner -- on every EVM chain. Contracts are NOT
@@ -182,3 +196,23 @@ addresses:
       label: "Gate Deposit"
       source: "https://etherscan.io/address/0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
       added: "2026-09-14"
+    # D-083 audit (2026-09-19): both were kept in EDEN's BSC top 10 (5.05% and
+    # 1.38%). EOAs, so they carry their Etherscan tags, as above.
+    - address: "0xe2fc31f816a9b94326492132018c3aecc4a93ae1"
+      category: cex
+      label: "Binance: Withdrawals 7"
+      source: "https://etherscan.io/address/0xe2fc31f816a9b94326492132018c3aecc4a93ae1"
+      added: "2026-09-19"
+    - address: "0x91dca37856240e5e1906222ec79278b16420dc92"
+      category: cex
+      label: "Indodax 3"
+      source: "https://etherscan.io/address/0x91dca37856240e5e1906222ec79278b16420dc92"
+      added: "2026-09-19"
+  # Bitlayer (chain id 200901, BTR's origin chain). No explorer tag we can
+  # read there, so the EOA-carries-its-tag rule applies, as it does for BSC.
+  "200901":
+    - address: "0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
+      category: cex
+      label: "Gate Deposit"
+      source: "https://etherscan.io/address/0xc882b111a75c0c657fc507c04fbfcd2cc984f071"
+      added: "2026-09-19"

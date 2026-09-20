@@ -44,7 +44,14 @@ endpoints:
   coingecko_pro: "https://pro-api.coingecko.com/api/v3"
   defillama: "https://api.llama.fi"
   coinalyze: "https://api.coinalyze.net/v1"
-  cryptopanic: "https://cryptopanic.com/api/developer/v2"
+  # Plan-scoped: /api/<plan>/v2. The free `developer` plan was discontinued in
+  # early 2026 and its route REMOVED: /api/developer/v2/posts/ is 404 with or
+  # without a token, while /api/growth/v2/posts/ and /api/enterprise/v2/posts/
+  # answer 400 "Missing auth_token parameter" (probed 2026-09-19). Growth is the
+  # lowest plan with a live route. Match this to the plan the key belongs to.
+  # A 404 here logs `cryptopanic_endpoint_not_found`; a refused key logs
+  # `cryptopanic_auth_rejected`. RSS keeps running either way (D-082).
+  cryptopanic: "https://cryptopanic.com/api/growth/v2"
   lunarcrush: "https://lunarcrush.com/api4/public"
   alternative_me: "https://api.alternative.me/fng/"
   binance_announcements: "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query"
@@ -150,6 +157,19 @@ holders:
     - "gauge"
     - "masterchef"
   excluded_addresses_file: "config/excluded_addresses.yaml"
+  # D-083. GoPlus serves a frozen holder list for some tokens: on 2026-09-19,
+  # 12 Binance-listed tokens showed 1-6 holders where Blockscout counted
+  # 1,459-25,761 live holders (AZTEC 2 vs 14,913, ERA 2 vs 18,948), and SENT
+  # showed 29 vs 3,668. A list that short reads 100% by construction. Below this
+  # count the reading is recorded as stale_holder_list with no share, and
+  # Layer 1 fails the asset as data_unavailable, never as "100%". Accurate
+  # lists sat at 203+ holders (Q 203 vs 205, JCT 520 vs 515). TUNE_ME.
+  min_goplus_holder_count: 50
+  # Share of supply left after exclusions below which top-10 concentration is
+  # not judged: K/(1-E) over a sliver of float reads any one wallet as control.
+  # Recorded as insufficient_float with no share (a Layer 1 FAIL,
+  # data_unavailable). No audited asset was near it (lowest 0.39, SFP). TUNE_ME.
+  min_measurable_float: 0.05
 
 # ------------------------------------------------------------------------------
 # SUPPLY HISTORY (D-072). Circulating supply per day, for net issuance in the L2
