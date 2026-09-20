@@ -2228,6 +2228,20 @@ something nobody measured.
   It should be deleted when these entries are folded into DECISIONS.md.
 - This is a method change, so it ships as `gem-v2` (D-076).
 
+**The trade-off, accepted deliberately (owner, 2026-09-20).** The rule makes no
+distinction between an asset we failed to measure and one that *cannot* have the
+reading at all. A token with no revenue model — most memecoins, many L1s —
+therefore forfeits the fundamental block's 30 of 110 weight permanently, even
+though `has_fundamentals` could tell the two apart and exempt it. That was put
+to the owner with the alternative (structural absence leaves the denominator,
+an unmeasured reading still scores 0) and declined: *"I think this keeps highly
+valuable coins on our radar rather than mere memecoins so it's fine."* The
+screen is therefore tilted, on purpose, toward assets with measurable revenue.
+A memecoin is not excluded — it still scores on supply, momentum, sector,
+events and drawdown, and its sector index is its own — but it starts 27% of the
+weight behind a protocol that earns fees. If the journal later shows that tilt
+costing returns, reversing it is a new `score_version`, not an edit here.
+
 **Evidence.** `tests/test_gem_v2.py::TestMissingDataScoresNothing` is the
 plan's acceptance test: a 2-block asset cannot outrank an otherwise identical
 5-block one, and the old formula is reproduced to show it did. The same file
