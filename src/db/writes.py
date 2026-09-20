@@ -36,6 +36,8 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "fundamentals_snapshot": ("snapshot_date", "base_asset"),
     "holder_snapshot": ("snapshot_date", "base_asset"),
     "supply_metrics": ("snapshot_date", "base_asset"),
+    "supply_history": ("snapshot_date", "base_asset"),
+    "supply_backfill": ("base_asset",),
     "liquidation_snapshot": ("snapshot_date", "exchange", "symbol"),
     "scheduled_event": ("event_id",),
     "attention_snapshot": ("snapshot_date", "base_asset", "source"),
@@ -54,10 +56,20 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "asset_contract": ("coingecko_id",),
     "address_label": ("chain", "address"),
     "emission_protocol": ("slug",),
+    # Pulse, the hourly clock (D-078..D-081).
+    "bar_1h": ("base_asset", "ts_open_utc"),
+    "oi_1h": ("base_asset", "ts_utc"),
+    "series_cursor": ("series", "base_asset"),
+    "pulse_result": ("ts_utc", "base_asset"),
+    "pulse_journal": ("entry_id",),
+    "pulse_forward_return": ("entry_id", "horizon"),
+    "pulse_alert": ("ts_utc", "base_asset", "kind"),
 }
 
 # Append-only tables: never UPDATE, only INSERT OR IGNORE.
-APPEND_ONLY = frozenset({"journal_entry", "forward_return"})
+APPEND_ONLY = frozenset(
+    {"journal_entry", "forward_return", "pulse_journal", "pulse_forward_return"}
+)
 
 #: Columns an upsert never overwrites with NULL. Only same-day re-runs can hit
 #: this (the date is in every key), and there a NULL means the enrichment call
@@ -65,6 +77,11 @@ APPEND_ONLY = frozenset({"journal_entry", "forward_return"})
 #: went away. Without this, the re-run blanked what the first run got (D-053).
 KEEP_WHEN_NULL: dict[str, frozenset[str]] = {
     "universe_snapshot": frozenset({"funding_interval_hours"}),
+    # D-077. A closed bar's taker volume never legitimately goes away, so a
+    # kline re-fetch that lacks it must not blank it. (A CoinGecko row cannot
+    # touch it at all: it never carries the column, and PREFERRED_SOURCE keeps
+    # a kline row's values whole against it.)
+    "price_daily": frozenset({"taker_buy_usd"}),
 }
 
 #: (source column, authoritative value) per table: a row already written by the

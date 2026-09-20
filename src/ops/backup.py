@@ -29,6 +29,8 @@ log = get_logger("ops.backup")
 TABLE_ORDER = (
     "journal_entry",
     "forward_return",
+    "pulse_journal",
+    "pulse_forward_return",
     "scheduled_event",
     "emission_protocol",
     "asset_contract",
@@ -41,6 +43,8 @@ TABLE_ORDER = (
     "fundamentals_snapshot",
     "holder_snapshot",
     "supply_metrics",
+    "supply_history",
+    "supply_backfill",
     "attention_snapshot",
     "market_regime",
     "spot_snapshot",
@@ -52,6 +56,11 @@ TABLE_ORDER = (
     "table_stats",
     "depth_snapshot",
     "derivatives_snapshot",
+    "pulse_result",
+    "pulse_alert",
+    "bar_1h",
+    "oi_1h",
+    "series_cursor",
     # The holdout audit log (D-018). Missing, a restore silently reset the count
     # of times the holdout had been looked at (D-065).
     "backtest_run",

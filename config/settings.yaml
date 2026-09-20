@@ -44,7 +44,14 @@ endpoints:
   coingecko_pro: "https://pro-api.coingecko.com/api/v3"
   defillama: "https://api.llama.fi"
   coinalyze: "https://api.coinalyze.net/v1"
-  cryptopanic: "https://cryptopanic.com/api/developer/v2"
+  # Plan-scoped: /api/<plan>/v2. The free `developer` plan was discontinued in
+  # early 2026 and its route REMOVED: /api/developer/v2/posts/ is 404 with or
+  # without a token, while /api/growth/v2/posts/ and /api/enterprise/v2/posts/
+  # answer 400 "Missing auth_token parameter" (probed 2026-09-19). Growth is the
+  # lowest plan with a live route. Match this to the plan the key belongs to.
+  # A 404 here logs `cryptopanic_endpoint_not_found`; a refused key logs
+  # `cryptopanic_auth_rejected`. RSS keeps running either way (D-082).
+  cryptopanic: "https://cryptopanic.com/api/growth/v2"
   lunarcrush: "https://lunarcrush.com/api4/public"
   alternative_me: "https://api.alternative.me/fng/"
   binance_announcements: "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query"
@@ -67,6 +74,13 @@ rate_limits:
                          # is lower; a refused call costs nothing but its slot (2026-09-14 probes)
   blockscout: 120        # TUNE_ME: public instances, no key
   defillama_datasets: 60
+  # Pulse (D-078). Binance meters these two paths on their own per-IP limits,
+  # not the 2,400-weight minute: /futures/data/* allows 1,000 requests per 5
+  # minutes, /fapi/v1/fundingRate 500 per 5 minutes (shared with fundingInfo).
+  # Set at 90% of the 5-minute ceiling spread over its five minutes, so no
+  # sustained pace can exceed it; ~160 funding calls take about a minute.
+  binance_futures_data: 180
+  binance_funding: 90
 
 # Sources paced one call every 60/rate seconds instead of bursting the minute's
 # budget up front. GoPlus answers a burst with code 4029 (2026-09-14 probe).
@@ -143,6 +157,55 @@ holders:
     - "gauge"
     - "masterchef"
   excluded_addresses_file: "config/excluded_addresses.yaml"
+  # D-083. GoPlus serves a frozen holder list for some tokens: on 2026-09-19,
+  # 12 Binance-listed tokens showed 1-6 holders where Blockscout counted
+  # 1,459-25,761 live holders (AZTEC 2 vs 14,913, ERA 2 vs 18,948), and SENT
+  # showed 29 vs 3,668. A list that short reads 100% by construction. Below this
+  # count the reading is recorded as stale_holder_list with no share, and
+  # Layer 1 fails the asset as data_unavailable, never as "100%". Accurate
+  # lists sat at 203+ holders (Q 203 vs 205, JCT 520 vs 515). TUNE_ME.
+  min_goplus_holder_count: 50
+  # Share of supply left after exclusions below which top-10 concentration is
+  # not judged: K/(1-E) over a sliver of float reads any one wallet as control.
+  # Recorded as insufficient_float with no share (a Layer 1 FAIL,
+  # data_unavailable). No audited asset was near it (lowest 0.39, SFP). TUNE_ME.
+  min_measurable_float: 0.05
+
+# ------------------------------------------------------------------------------
+# SUPPLY HISTORY (D-072). Circulating supply per day, for net issuance in the L2
+# supply block. Each asset is backfilled from CoinGecko /market_chart ONCE, then
+# extended every day from market_snapshot for free. Runs in the supply job, after
+# asset_contracts, so the two never compete for CoinGecko's rate limit.
+# ------------------------------------------------------------------------------
+supply_history:
+  # One call per asset. At rate_limits.coingecko (10/min) this is ~15 minutes;
+  # the whole screened universe is covered in about four runs, survivors first.
+  max_fetches_per_run: 150
+  # Re-backfill after this many days, which heals gaps left by a missed daily
+  # collection. ~18 calls a day across the universe in steady state.
+  refresh_days: 30
+  # The Demo plan serves 365 days of history; two 90-day windows need ~187.
+  history_days: 365
+
+# ------------------------------------------------------------------------------
+# Pulse market data (D-078): 1H klines, 1H open interest and settled funding for
+# Layer 1 survivors, fetched every hour inside collect-hourly. Features are
+# computed from the fetched window in-process; only bars and OI newer than the
+# series_cursor are written: ~4 writes per asset an hour (a bar, an OI row
+# and their two cursors), ~0.47M a month at ~160 survivors.
+# ------------------------------------------------------------------------------
+pulse:
+  # 499, not 500: Binance documents limit [500, 1000] as weight 5 and [100, 500)
+  # as weight 2. Measured 2026-09-19, 500 was billed 2 -- but 499 is weight 2
+  # under either reading and costs one bar (D-078).
+  klines_limit: 499
+  oi_limit: 500
+  # 1000 (the endpoint maximum, still one call) so R1's own-history percentile
+  # spans ~333 days of an 8h contract and ~41 days of a 1h one; 100 covered as
+  # little as 4 days.
+  funding_limit: 1000
+  concurrency: 8
+  benchmark_asset: "BTC"
 
 contracts:
   # CoinGecko /coins/{id} lookups confirming the origin chain of a multi-chain

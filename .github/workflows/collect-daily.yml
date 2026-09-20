@@ -189,6 +189,10 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          # supply_history and asset_contracts call CoinGecko. Keyless, the
+          # runner's shared Azure IP is throttled far below the configured
+          # 10/min; the Demo key is what makes the 150-asset backfill fit (D-072).
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
           PYTHONIOENCODING: utf-8
 
       # Guarded in the shell, not in `if:` (D-033). On success only: the missed

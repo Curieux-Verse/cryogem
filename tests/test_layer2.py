@@ -31,10 +31,8 @@ def frame(assets: list[str], **columns) -> pd.DataFrame:
         "revenue_annualised": np.nan,
         "active_addresses_24h": np.nan,
         "has_fundamentals": 0,
+        "emissions_annual": np.nan,
         "emissions_trajectory": None,
-        "burned_pct_of_total": np.nan,
-        "staked_ratio": np.nan,
-        "staked_is_team_controlled": np.nan,
         "social_volume_z": np.nan,
         "social_dominance": np.nan,
         "days_to_next_major_unlock": np.nan,
@@ -85,7 +83,12 @@ class TestPercentileRanking:
 
 
 class TestWeightRenormalisation:
+    """Renamed in spirit by D-075: weights normalise over LIVE blocks, not over
+    whatever an individual asset happens to have."""
+
     def test_asset_missing_the_fundamental_block_still_totals_within_range(self):
+        """Unchanged by D-075: a block dark for everyone drops out for everyone,
+        so the assets are still scored, within 0-100."""
         df = frame(["A", "B", "C"], has_fundamentals=0)
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert scored["fundamental"].isna().all(), "no revenue model => block is None"
@@ -94,10 +97,14 @@ class TestWeightRenormalisation:
         assert (scored["total_score"] >= 0.0).all()
 
     def test_missing_block_is_none_not_zero(self):
-        """A None redistributes weight; a zero would bury every non-revenue asset.
+        """The block stays None in the row -- never a measured zero.
 
-        Two otherwise-identical assets, one with fundamentals data and one
-        without, must not be separated by a fabricated zero.
+        Changed by D-075. This test used to assert that renormalisation kept
+        HASNT comparable to HAS. Its assertion (HASNT > 0) still holds, but for
+        a different reason: in a two-asset universe the live floor is both
+        assets, so a fundamental block measured for one of them is dark and
+        drops out for both. The None-not-zero half of the contract survives
+        unchanged; see TestMissingDataScoresNothing for the live case.
         """
         df = frame(["HAS", "HASNT"])
         df.loc["HAS", "has_fundamentals"] = 1
@@ -106,18 +113,19 @@ class TestWeightRenormalisation:
         df.loc["HAS", "revenue_annualised"] = 12e6
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert pd.isna(scored.loc["HASNT", "fundamental"])
-        # If a missing block scored 0, HASNT would be dragged far below HAS.
-        # Renormalisation keeps them comparable on the blocks they share.
         assert scored.loc["HASNT", "total_score"] > 0.0
 
     def test_blocks_available_counts_exactly_the_measured_blocks(self):
         """The old assertion (>= 1 and <= 6) could not fail. The fixture measures
         supply (float), events (a schedule with no cliff) and drawdown (ATH);
-        fundamental, sector (unclassified) and attention are unmeasured."""
+        fundamental, momentum (no bars), sector (unclassified) and attention
+        are unmeasured. D-077 added momentum, so there are seven blocks."""
         df = frame(["A", "B", "C"])
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert (scored["blocks_available"] == 3).all()
-        assert len(BLOCKS) == 6
+        assert len(BLOCKS) == 7
+        assert scored.attrs["live_blocks"] == ["supply", "events", "drawdown"]
+        assert (scored["coverage"] == 1.0).all(), "measured on every live block"
 
     def test_rank_is_dense_and_starts_at_one(self):
         df = frame(["A", "B", "C", "D"])
@@ -179,16 +187,26 @@ class TestBlockBehaviour:
         scored = Layer2Scorer(RUN_DATE).score(df)
         assert pd.isna(scored.loc["NOATH", "drawdown"])
 
-    def test_team_controlled_stake_is_discounted(self):
-        """Staked supply reduces float only if it is not the team's own stake."""
-        df = frame(["TEAM", "REAL"])
-        df.loc[:, "staked_ratio"] = 0.5
-        df.loc["TEAM", "staked_is_team_controlled"] = 1
-        df.loc["REAL", "staked_is_team_controlled"] = 0
-        scorer = Layer2Scorer(RUN_DATE)
-        _, metrics = scorer.score_supply(df)
-        assert pd.isna(metrics["staked_ratio"]["TEAM"])
-        assert pd.notna(metrics["staked_ratio"]["REAL"])
+    def test_lower_net_issuance_scores_higher(self):
+        """D-072. A burn is negative issuance and outranks an inflating supply."""
+        df = frame(["BURN", "FLAT", "INFLATE"])
+        df["emissions_annual"] = [-0.05, 0.0, 0.40]
+        _, metrics = Layer2Scorer(RUN_DATE).score_supply(df)
+        issuance = metrics["net_issuance"]
+        assert issuance["BURN"] > issuance["FLAT"] > issuance["INFLATE"]
+
+    def test_unmeasured_issuance_is_none_not_zero(self):
+        """No supply history is not zero issuance: it must not rank as the cleanest."""
+        df = frame(["UNKNOWN", "A", "B"])
+        df["emissions_annual"] = [np.nan, 0.01, 0.30]
+        _, metrics = Layer2Scorer(RUN_DATE).score_supply(df)
+        assert pd.isna(metrics["net_issuance"]["UNKNOWN"])
+
+    def test_no_supply_metric_without_a_writer_is_listed(self):
+        """D-072. Burned and staked share had no source; they must not look live."""
+        _, metrics = Layer2Scorer(RUN_DATE).score_supply(frame(["A", "B"]))
+        assert "burned_pct" not in metrics
+        assert "staked_ratio" not in metrics
 
     def test_unclassified_sector_scores_none_not_the_mean(self):
         """An unmapped asset must not inherit an average sector score."""
@@ -247,8 +265,9 @@ class TestMissingUnlockDataIsNotGoodNews:
     def test_an_asset_with_no_event_data_has_no_events_score(self):
         """D-059. The catalyst and monitoring flags were filled with False and
         counted as measured, so an asset we knew nothing about scored 50 on
-        events. With nothing known the block is None, and its weight moves to
-        the blocks that were measured."""
+        events. With nothing known the block is None. D-075: in this one-asset
+        universe the block is then dark and drops out; in a live universe the
+        None would earn 0 (TestMissingDataScoresNothing)."""
         df = frame(["UNKNOWN"])
         df.loc["UNKNOWN", "has_unlock_record"] = False
         scored = Layer2Scorer(RUN_DATE).score(df)

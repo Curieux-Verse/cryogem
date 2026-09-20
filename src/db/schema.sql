@@ -160,14 +160,25 @@ CREATE INDEX IF NOT EXISTS idx_holder_asset_date
     ON holder_snapshot(base_asset, snapshot_date);
 
 -- =============================================================================
--- SUPPLY METRICS: emissions + burns, feeding the L2 supply block.
+-- SUPPLY METRICS: net issuance, feeding the L2 supply block (D-072).
+--
+-- Written by the supply_history collector from CoinGecko's circulating-supply
+-- history. emissions_annual is NET issuance -- circulating growth over the
+-- window, annualised -- so a burn shows up as a negative number rather than
+-- needing a column of its own.
+--
+-- NOT POPULATED, and deliberately not read by the scoring layer:
+-- cumulative_burned, burned_pct_of_total, staked_ratio,
+-- staked_is_team_controlled. No free source measures them reliably, and for a
+-- week they sat in the supply block as permanent NULLs that looked like
+-- metrics. Kept only because SQLite cannot drop a column everywhere this runs.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS supply_metrics (
     snapshot_date       TEXT NOT NULL,
     base_asset          TEXT NOT NULL,
-    emissions_annual    REAL,
-    emissions_prev_annual REAL,
-    emissions_trajectory TEXT,
+    emissions_annual    REAL,               -- net circulating growth, latest window, annualised
+    emissions_prev_annual REAL,             -- the same, for the window before it
+    emissions_trajectory TEXT,              -- falling | flat | rising
     cumulative_burned   REAL,
     burned_pct_of_total REAL,
     staked_ratio        REAL,
@@ -178,6 +189,33 @@ CREATE TABLE IF NOT EXISTS supply_metrics (
 );
 CREATE INDEX IF NOT EXISTS idx_supply_asset_date
     ON supply_metrics(base_asset, snapshot_date);
+
+-- Circulating supply by day, per asset: CoinGecko's own history, backfilled
+-- once from /market_chart (market cap / price at 00:00 UTC, which reproduces
+-- CoinGecko's reported circulating_supply) and extended daily from
+-- market_snapshot at no API cost (D-072).
+CREATE TABLE IF NOT EXISTS supply_history (
+    snapshot_date       TEXT NOT NULL,
+    base_asset          TEXT NOT NULL,
+    coingecko_id        TEXT,
+    circulating_supply  REAL NOT NULL,
+    source              TEXT NOT NULL,      -- coingecko_market_chart | coingecko_markets
+    fetched_at_utc      TEXT NOT NULL,
+    PRIMARY KEY (snapshot_date, base_asset)
+);
+CREATE INDEX IF NOT EXISTS idx_supply_history_asset_date
+    ON supply_history(base_asset, snapshot_date);
+
+-- Which assets have had their history backfilled, and from which CoinGecko id.
+-- One row per asset: the planner reads this instead of scanning supply_history,
+-- because Turso meters rows read.
+CREATE TABLE IF NOT EXISTS supply_backfill (
+    base_asset          TEXT PRIMARY KEY,
+    coingecko_id        TEXT NOT NULL,
+    days_returned       INTEGER,
+    backfilled_utc      TEXT NOT NULL,
+    fetched_at_utc      TEXT NOT NULL
+);
 
 -- =============================================================================
 -- LIQUIDATIONS. NOTE: all totals are FLOORS, not measurements. Feeds are
@@ -358,6 +396,12 @@ CREATE TABLE IF NOT EXISTS layer2_result (
     universe_size       INTEGER NOT NULL,
     percentiles         TEXT,
     fetched_at_utc      TEXT NOT NULL,
+    -- D-077: 7-day flow and trend block.
+    score_momentum      REAL,
+    -- D-075: weight measured / weight of the blocks live in this run.
+    coverage            REAL,
+    -- D-076: the scoring method that produced the row.
+    score_version       TEXT,
     PRIMARY KEY (run_date, base_asset)
 );
 CREATE INDEX IF NOT EXISTS idx_l2_run_rank ON layer2_result(run_date, rank);
@@ -400,7 +444,9 @@ CREATE TABLE IF NOT EXISTS journal_entry (
     layer3_values       TEXT,
     news_context        TEXT,
     events_context      TEXT,
-    created_at_utc      TEXT NOT NULL
+    created_at_utc      TEXT NOT NULL,
+    -- D-076: cohorts are split by scoring method, never blended.
+    score_version       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_journal_run     ON journal_entry(run_date);
 CREATE INDEX IF NOT EXISTS idx_journal_asset   ON journal_entry(base_asset, run_date);
@@ -436,6 +482,8 @@ CREATE TABLE IF NOT EXISTS price_daily (
     volume_usd      REAL,
     source          TEXT NOT NULL,
     fetched_at_utc  TEXT NOT NULL,
+    -- D-077: aggressor-flagged buy volume from Binance klines (quote units).
+    taker_buy_usd   REAL,
     PRIMARY KEY (snapshot_date, base_asset)
 );
 CREATE INDEX IF NOT EXISTS idx_price_asset_date ON price_daily(base_asset, snapshot_date);
@@ -547,3 +595,129 @@ CREATE TABLE IF NOT EXISTS spot_snapshot (
 );
 CREATE INDEX IF NOT EXISTS idx_spot_asset_date
     ON spot_snapshot(base_asset, snapshot_date);
+
+-- =============================================================================
+-- PULSE: the hourly clock (docs/PLAN_ACTIVE_SCREENER.md; D-074, D-078..D-081).
+-- Timestamps are ISO-8601 UTC, "YYYY-MM-DDTHH:MM:SSZ". Only CLOSED bars are
+-- stored. 4H bars are never stored: they are resampled from these, so the two
+-- timeframes cannot disagree.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS bar_1h (
+    base_asset       TEXT NOT NULL,
+    ts_open_utc      TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    open             REAL,
+    high             REAL,
+    low              REAL,
+    close            REAL NOT NULL,
+    quote_volume     REAL,
+    taker_buy_quote  REAL,
+    trades           INTEGER,
+    fetched_at_utc   TEXT NOT NULL,
+    PRIMARY KEY (base_asset, ts_open_utc)
+);
+
+-- Binance openInterestHist, period 1h. oi_contracts is sumOpenInterest (base
+-- units), the only OI measure Pulse reasons about: notional moves with price.
+CREATE TABLE IF NOT EXISTS oi_1h (
+    base_asset       TEXT NOT NULL,
+    ts_utc           TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    oi_contracts     REAL,
+    oi_usd           REAL,
+    fetched_at_utc   TEXT NOT NULL,
+    PRIMARY KEY (base_asset, ts_utc)
+);
+
+-- Write cursor per series, so an hourly run writes only what is new without a
+-- MAX() scan over the whole series (Turso meters rows read).
+CREATE TABLE IF NOT EXISTS series_cursor (
+    series           TEXT NOT NULL,
+    base_asset       TEXT NOT NULL,
+    symbol           TEXT,
+    last_ts_utc      TEXT NOT NULL,
+    updated_utc      TEXT NOT NULL,
+    PRIMARY KEY (series, base_asset)
+);
+
+CREATE TABLE IF NOT EXISTS pulse_result (
+    ts_utc           TEXT NOT NULL,
+    base_asset       TEXT NOT NULL,
+    score            REAL,
+    rank             INTEGER,
+    universe_size    INTEGER,
+    state_4h         TEXT,
+    state_1h         TEXT,
+    oi_quadrant      TEXT,
+    flags            TEXT,
+    components       TEXT,
+    features         TEXT,
+    aligned          INTEGER NOT NULL DEFAULT 0,
+    gem_rank         INTEGER,
+    score_version    TEXT,
+    fetched_at_utc   TEXT NOT NULL,
+    PRIMARY KEY (ts_utc, base_asset)
+);
+CREATE INDEX IF NOT EXISTS idx_pulse_asset_ts ON pulse_result(base_asset, ts_utc);
+
+-- Pulse journal. APPEND-ONLY, like journal_entry: an entry is written when an
+-- asset ENTERS the Pulse top N or ALIGNED, with a random-survivor control.
+CREATE TABLE IF NOT EXISTS pulse_journal (
+    entry_id         TEXT PRIMARY KEY,
+    ts_signal_utc    TEXT NOT NULL,
+    base_asset       TEXT NOT NULL,
+    trigger          TEXT NOT NULL,
+    is_control       INTEGER NOT NULL DEFAULT 0,
+    pulse_score      REAL,
+    pulse_rank       INTEGER,
+    gem_rank         INTEGER,
+    state_4h         TEXT,
+    features         TEXT,
+    score_version    TEXT,
+    created_at_utc   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pulse_journal_ts ON pulse_journal(ts_signal_utc);
+
+CREATE TABLE IF NOT EXISTS pulse_forward_return (
+    entry_id         TEXT NOT NULL,
+    horizon          TEXT NOT NULL,
+    entry_ts_utc     TEXT,
+    entry_price      REAL,
+    exit_price       REAL,
+    return_raw       REAL,
+    return_vs_btc    REAL,
+    max_favourable   REAL,
+    max_adverse      REAL,
+    computed_at_utc  TEXT NOT NULL,
+    PRIMARY KEY (entry_id, horizon),
+    FOREIGN KEY (entry_id) REFERENCES pulse_journal(entry_id)
+);
+
+-- Alerts actually sent, so a state change is announced once, never repeated.
+CREATE TABLE IF NOT EXISTS pulse_alert (
+    ts_utc           TEXT NOT NULL,
+    base_asset       TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    message          TEXT,
+    delivered        INTEGER NOT NULL DEFAULT 0,
+    created_at_utc   TEXT NOT NULL,
+    PRIMARY KEY (ts_utc, base_asset, kind)
+);
+
+CREATE TRIGGER IF NOT EXISTS pulse_journal_no_delete
+BEFORE DELETE ON pulse_journal
+BEGIN
+    SELECT RAISE(ABORT, 'pulse_journal is append-only: deletion is forbidden');
+END;
+
+CREATE TRIGGER IF NOT EXISTS pulse_journal_no_update
+BEFORE UPDATE ON pulse_journal
+BEGIN
+    SELECT RAISE(ABORT, 'pulse_journal is append-only: mutation is forbidden');
+END;
+
+CREATE TRIGGER IF NOT EXISTS pulse_forward_return_no_delete
+BEFORE DELETE ON pulse_forward_return
+BEGIN
+    SELECT RAISE(ABORT, 'pulse_forward_return is append-only: deletion is forbidden');
+END;

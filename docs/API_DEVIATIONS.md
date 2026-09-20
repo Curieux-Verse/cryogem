@@ -24,6 +24,21 @@ does, and the date observed.
 - **Code now does:** uses `respx`, the httpx-native equivalent.
 - **Impact:** none beyond the dependency name.
 
+## 2026-09-19 — `cryptopanic.com/api/<plan>/v2/posts/`
+- **Document said:** the free Developer plan serves `/api/developer/v2/posts/`
+  with `auth_token`.
+- **Observed:** that path answers `404` (an HTML page) with or without a token,
+  while `/api/growth/v2/posts/` and `/api/enterprise/v2/posts/` answer
+  `400 {"status":"api_error","info":"Missing auth_token parameter"}`. The free
+  Developer plan was discontinued in early 2026 and its route removed. An
+  unknown key is refused with `400 "Token not found"`, not `401`.
+- **Code now does:** `endpoints.cryptopanic` points at `/api/growth/v2`, sends
+  `public=true` beside the token, and logs `cryptopanic_endpoint_not_found`
+  (404) or `cryptopanic_auth_rejected` (400/401/403) with an action, instead of
+  one generic warning. RSS is unaffected.
+- **Impact:** CryptoPanic stays empty until the account holds a plan whose route
+  exists; the hourly log now says so. D-082 carries the verification command.
+
 ## Open items to verify at first live run
 
 These are asserted by the spec but not yet confirmed against the live APIs.
@@ -37,8 +52,8 @@ Confirm each on the first real collection and record the answer above.
 - [ ] `futures/data/openInterestHist` really retains only ~30 days.
 - [ ] At least one perp has no Binance spot pair (orphan perp -> ratio `inf`).
 - [ ] CoinGecko free tier page size / rate limit as actually enforced.
-- [ ] CryptoPanic plan availability (public docs mark the free Developer plan
-      discontinued — check the account page, not the docs) (R2).
+- [x] CryptoPanic plan availability — answered 2026-09-19, see the entry below
+      and `docs/decisions_pending/D-082.md` (R2).
 - [ ] LunarCrush free-tier request limits (R3).
 
 ---

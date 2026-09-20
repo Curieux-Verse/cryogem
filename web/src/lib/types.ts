@@ -9,11 +9,15 @@ export type MaybeInfinite = number | "Infinity" | "-Infinity" | null;
 export interface Blocks {
   fundamental: number | null;
   supply: number | null;
+  /** D-077. Absent (undefined) in files written before gem-v2. */
+  momentum?: number | null;
   sector: number | null;
   events: number | null;
   attention: number | null;
   drawdown: number | null;
 }
+
+export type BlockKey = keyof Blocks;
 
 export interface Layer3Summary {
   setup_detected: boolean;
@@ -33,6 +37,10 @@ export interface RankedRow {
   sector: string;
   file: string;
   layer3: Layer3Summary | null;
+  /** D-075: weight measured / weight live, 0-1. Absent before gem-v2. */
+  coverage?: number | null;
+  /** D-076. Absent before gem-v2. */
+  score_version?: string | null;
 }
 
 export interface Funnel {
@@ -58,6 +66,11 @@ export interface Latest {
   dark_checks: string[];
   ranked: RankedRow[];
   report_top_n: number;
+  /** D-076. Absent before gem-v2. */
+  score_version?: string | null;
+  /** D-075: the Layer 2 blocks measured for enough survivors to count this
+   *  run. A block not listed is dark for everyone. Absent before gem-v2. */
+  live_blocks?: string[] | null;
 }
 
 export interface CheckValue {
@@ -135,6 +148,8 @@ export interface JournalEntry {
   is_control: boolean;
   price_at_signal: number;
   btc_price_at_signal: number;
+  /** The method that ranked this entry (D-076). Older files carry none. */
+  score_version?: string;
   returns: Record<
     string,
     {
@@ -150,7 +165,11 @@ export interface Journal {
   schema_version: number;
   generated_at_utc: string;
   horizons: string[];
+  /** D-076: the scoring method `statistics` describes. Absent in older files. */
+  score_version?: string;
   statistics: Record<string, HorizonStats>;
+  /** Every cohort, keyed by scoring method. Never blended into one number. */
+  statistics_by_version?: Record<string, Record<string, HorizonStats>>;
   first_entry_date: string | null;
   coverage_note: string;
   entries: JournalEntry[];
@@ -247,6 +266,10 @@ export interface AssetDetail {
     universe_size: number;
     blocks: Blocks;
     percentiles: Record<string, number | null>;
+    /** D-075. Absent before gem-v2. */
+    coverage?: number | null;
+    /** D-076. Absent before gem-v2. */
+    score_version?: string | null;
   } | null;
   layer3: Record<string, unknown> | null;
   market: MarketSnapshot | null;
@@ -301,4 +324,74 @@ export interface History {
     survivors: number;
     survival_rate: number | null;
   }[];
+}
+
+// -- pulse.json -------------------------------------------------------------------
+// Mirrors PULSE_JSON_EXAMPLE in src/pulse/contract.py (schema_version 1). The
+// hourly clock: baked by build-site from pulse_result, never committed.
+
+/** F5/F6 structure states (contract.STATES). */
+export type PulseState = "bull_break" | "bull_trend" | "neutral" | "bear_trend" | "bear_break";
+
+/** F4 OI x price x flow quadrant (contract.OI_QUADRANTS). A conditioner, never a
+ *  signal on its own (D-074). */
+export type OiQuadrant =
+  | "confirm_long"
+  | "short_covering"
+  | "new_shorts"
+  | "long_liquidation"
+  | "leverage_build"
+  | "neutral";
+
+export interface PulseAsset {
+  asset: string;
+  score: number | null;
+  rank: number | null;
+  /** Rank at the previous scored hour, or null. */
+  prev_rank: number | null;
+  /** Score change vs the previous hour, or null. */
+  delta: number | null;
+  gem_rank: number | null;
+  aligned: boolean;
+  /** Typed wide so an unknown future value renders as text, not a crash. */
+  state_4h: PulseState | string | null;
+  bars_since_4h?: number | null;
+  state_1h: PulseState | string | null;
+  oi_quadrant: OiQuadrant | string | null;
+  /** RISK_FLAGS: crowding, leverage_no_move. */
+  flags: string[];
+  /** Weight measured / weight live, 0-1 (D-075). */
+  coverage: number | null;
+  components?: Record<string, number | null>;
+  features?: Record<string, number | null>;
+  /** Last 48 closed 1H closes. */
+  spark_1h?: (number | null)[];
+  /** Per-bar taker flow in [-1, 1], same 48 bars as spark_1h. */
+  flow_1h?: (number | null)[];
+  /** Last 42 closed 4H closes (7 days). */
+  spark_4h?: (number | null)[];
+  file?: string | null;
+}
+
+export interface PulseRiser {
+  asset: string;
+  delta: number;
+  rank: number | null;
+  prev_rank: number | null;
+}
+
+export interface Pulse {
+  schema_version: number;
+  /** "unavailable" when no pulse_result was written in the last 3h. */
+  status: "ok" | "unavailable" | string;
+  as_of_utc: string | null;
+  generated_at_utc: string | null;
+  score_version: string | null;
+  universe_size: number | null;
+  scored: number | null;
+  aligned: string[];
+  risers: PulseRiser[];
+  assets: PulseAsset[];
+  /** EXCLUDING_FLAGS: thin_book, insufficient_history. Never hidden. */
+  excluded: { asset: string; reason: string }[];
 }

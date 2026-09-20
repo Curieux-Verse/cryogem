@@ -48,6 +48,16 @@ class TestTriggers:
         for path in sorted(WORKFLOWS.glob("*.yml")):
             doc = yaml.safe_load(path.read_text(encoding="utf-8"))
             for name, job in doc["jobs"].items():
+                if "uses" in job:
+                    # A reusable-workflow call: GitHub rejects timeout-minutes
+                    # here, and the called workflow's jobs carry their own.
+                    assert "timeout-minutes" not in job, f"{path.name}:{name}"
+                    called = yaml.safe_load(
+                        (ROOT / job["uses"].removeprefix("./")).read_text(encoding="utf-8")
+                    )
+                    for inner, inner_job in called["jobs"].items():
+                        assert "timeout-minutes" in inner_job, f"{job['uses']}:{inner}"
+                    continue
                 assert "timeout-minutes" in job, f"{path.name}:{name}"
 
     def test_the_workflow_run_chain_is_four_workflows_at_most(self):
@@ -231,3 +241,76 @@ class TestOneDateRule:
         )
         db.commit()
         assert daily.latest_screen_date(db) == "2026-09-03"
+
+
+class TestPulseRunsHourlyAndDeploysWithoutACommit:
+    """PLAN section 6: Pulse scores every hour inside collect-hourly, and the
+    site redeploys with a fresh pulse.json without a git commit."""
+
+    def test_pulse_is_its_own_job_independent_of_the_collect_tier(self):
+        jobs = load("collect-hourly.yml")["jobs"]
+        pulse = jobs["pulse"]
+        # No `needs`: a failing collector (a 404ing news source) must not
+        # stop Pulse, and Pulse must not stop the trigger-lag row.
+        assert "needs" not in pulse
+        assert "continue-on-error" not in pulse
+        run = next(s for s in pulse["steps"] if "src.cli pulse run" in str(s.get("run", "")))
+        env = env_of(run)
+        for key in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "TELEGRAM_BOT_TOKEN",
+                    "TELEGRAM_CHAT_ID", "PYTHONIOENCODING"):
+            assert key in env, key
+        assert "timeout-minutes" in pulse
+
+    def test_collect_job_is_unchanged_in_meaning(self):
+        steps = load("collect-hourly.yml")["jobs"]["collect"]["steps"]
+        assert not any("pulse" in str(s.get("run", "")) for s in steps)
+        lag = next(s for s in steps if "record_lag" in str(s.get("run", "")))
+        assert lag["if"].startswith("always()")
+        assert any("HEALTHCHECK_HOURLY" in str(env_of(s)) for s in steps)
+
+    def test_pulse_pings_its_own_check_on_success_only(self):
+        steps = load("collect-hourly.yml")["jobs"]["pulse"]["steps"]
+        ping = next(s for s in steps if "HEALTHCHECK_PULSE" in str(env_of(s)))
+        assert ping["if"] == "success()"
+        assert 'if [ -z "$HC" ]' in ping["run"]
+
+    def test_the_site_redeploys_through_build_site_as_a_reusable_workflow(self):
+        site = load("collect-hourly.yml")["jobs"]["site"]
+        assert site["uses"] == "./.github/workflows/build-site.yml"
+        assert site["secrets"] == "inherit"
+        assert site["needs"] == "pulse"
+        assert "cancelled()" in site["if"]
+        assert site["permissions"] == {"contents": "read", "pages": "write", "id-token": "write"}
+        assert site["with"]["checkout_ref"] == "main"
+
+    def test_build_site_is_callable_and_keeps_its_guards(self):
+        doc = load("build-site.yml")
+        on = triggers(doc)
+        assert "workflow_call" in on
+        assert on["workflow_run"]["workflows"] == ["publish"]
+        assert doc["concurrency"]["group"] == "pages"
+        guard = doc["jobs"]["build"]["if"]
+        assert "github.event_name != 'workflow_run'" in guard
+        assert "conclusion == 'success'" in guard
+
+    def test_build_site_bakes_pulse_before_the_bundle_and_its_scan(self):
+        steps = load("build-site.yml")["jobs"]["build"]["steps"]
+        runs = [str(s.get("run", "")) for s in steps]
+        bake = next(i for i, r in enumerate(runs) if "src.cli pulse bake" in r)
+        build = next(i for i, r in enumerate(runs) if "npm run build" in r)
+        scan = next(i for i, s in enumerate(steps) if "Scan the built bundle" in str(s.get("name")))
+        assert bake < build < scan
+        # A bake failure never blocks the Gem site deploy.
+        assert steps[bake]["continue-on-error"] is True
+        assert "TURSO_DATABASE_URL" in env_of(steps[bake])
+        checkout = steps[0]
+        assert checkout["with"]["ref"] == "${{ env.CHECKOUT_REF }}"
+        assert load("build-site.yml")["jobs"]["build"]["env"]["CHECKOUT_REF"] == "${{ inputs.checkout_ref }}"
+
+    def test_pulse_json_is_never_committed(self):
+        import subprocess
+
+        res = subprocess.run(
+            ["git", "check-ignore", "-q", "data/public/pulse.json"], cwd=ROOT, check=False
+        )
+        assert res.returncode == 0

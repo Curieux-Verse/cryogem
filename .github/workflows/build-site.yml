@@ -29,6 +29,17 @@ on:
       - "web/**"
       - ".github/workflows/build-site.yml"
   workflow_dispatch:
+  # collect-hourly calls this every hour after Pulse, so the site redeploys with
+  # a fresh pulse.json and NO git commit (PLAN section 6). Inside a called
+  # workflow `github` is the CALLER's context: event_name is
+  # 'workflow_dispatch', which the build job's guard below already admits.
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Ref to build; empty = the event's own ref"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: pages
@@ -42,14 +53,52 @@ permissions:
 jobs:
   build:
     # Never deploy on the back of a failed publish. `deploy` needs `build`, so
-    # skipping here skips the deployment too.
+    # skipping here skips the deployment too. Only a workflow_run event carries
+    # a conclusion; push, dispatch and a workflow_call (whose event_name is its
+    # caller's, 'workflow_dispatch') all take the first branch.
     if: >
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20, not 15: the Python setup and the pulse bake add ~1-2 minutes.
+    timeout-minutes: 20
+    # Bound under env: (never `${{ inputs }}` inline) to satisfy ci.yml's
+    # interpolation guard. Empty except from collect-hourly, which asks for the
+    # newest main; empty means the event's own ref, as before.
+    env:
+      CHECKOUT_REF: ${{ inputs.checkout_ref }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      # pulse.json is never committed (.gitignore): every build bakes it, the
+      # daily one included, or a daily deploy would ship a site without it.
+      # BEFORE `npm run build`, so copy-data puts it in web/dist and the secret
+      # scan below covers it.
+      #
+      # continue-on-error: Pulse is secondary to the Gem site, and a bake
+      # failure must never block the daily deploy. The bake itself already
+      # writes status "unavailable" whenever the database cannot be read or
+      # the newest hour is over 3h old, and exits 1 only on a real error, so
+      # the page tells the truth and the red step still shows. This only
+      # covers failures before Python runs (pip, setup).
+      - uses: actions/setup-python@v5
+        continue-on-error: true
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python dependencies
+        continue-on-error: true
+        run: pip install -r requirements.txt
+      - name: Bake pulse.json
+        continue-on-error: true
+        run: python -m src.cli pulse bake
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          PYTHONIOENCODING: utf-8
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

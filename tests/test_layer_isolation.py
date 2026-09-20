@@ -30,6 +30,14 @@ SCREENING_MODULES = (
     "src.screening.layer1_kill",
     "src.screening.layer2_score",
     "src.screening.pipeline",
+    # Pulse (D-079..D-081): scored on market data only; news must not reach it.
+    "src.pulse.features",
+    "src.pulse.score",
+    "src.pulse.structure",
+    "src.pulse.run",
+    "src.pulse.journal",
+    "src.pulse.publish",
+    "src.pulse.alerts",
 )
 
 #: The forbidden dependency.

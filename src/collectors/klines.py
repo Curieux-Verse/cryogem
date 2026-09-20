@@ -22,11 +22,20 @@
 # the one collector that can make the dataset older than the project. Structure
 # detection and the first backtest are both gated on that.
 #
-# Weight discipline: Binance futures klines cost weight by `limit`
-# (<=100 -> 1, <=500 -> 2, <=1000 -> 5, >1000 -> 10) against a 2400/min budget.
-# A 528-symbol backfill at limit 1500 is 5,280 weight and would be rejected
+# Weight discipline: Binance USD-M futures klines cost weight by `limit`, in
+# half-open bands: [1,100) -> 1, [100,500) -> 2, [500,1000] -> 5, >1000 -> 10,
+# against a 2400/min budget. (ccxt encodes the same table for fapi klines as
+# byLimit [[99,1],[499,2],[1000,5],[10000,10]].) This header used to say
+# "<=500 -> 2", and PAGE_LIMIT was 500 -- which is weight 5, not 2 (D-077). A
+# 528-symbol backfill at limit 1500 is 5,280 weight and would be rejected
 # partway through, so the backfill paginates in weight-cheap pages and the
-# daily run asks only for the handful of bars it is missing.
+# daily run asks only for the handful of bars it is missing, at weight 1.
+#
+# D-077: each bar also carries TAKER BUY volume, aggressor-flagged by Binance
+# itself (index 9 base units, index 10 quote units -- the same array layout as
+# spot /api/v3/klines). The quote figure is stored as price_daily.taker_buy_usd
+# for the Layer 2 momentum block's 7-day flow. INCREMENTAL_DAYS re-fetches the
+# last week every morning, so the flow window is populated after one run.
 # -----------------------------------------------------------------------------
 """
 
@@ -50,9 +59,14 @@ from src.timeutil import (
     utc_now_iso,
 )
 
-#: Bars per request. 500 keeps futures klines at weight 2 rather than 10, so a
-#: full-universe pass fits inside one minute's budget with room to spare.
-PAGE_LIMIT = 500
+#: Bars per backfill request. 499 is the top of the weight-2 band; 500 was
+#: weight 5 (D-077), so the same pages cost 2.5x what the comment claimed.
+PAGE_LIMIT = 499
+
+#: Bars per incremental request: INCREMENTAL_DAYS + today fits easily, and
+#: under 100 the request is weight 1. Weight is charged on `limit`, not on the
+#: bars returned, so asking for 499 to receive 8 cost 2 (really 5) per symbol.
+INCREMENTAL_PAGE_LIMIT = 99
 
 #: Daily bars kept. ~3 years is enough for a weekly trendline with several
 #: touches, which is the longest lookback any Layer 3 rule needs.
@@ -67,6 +81,8 @@ INCREMENTAL_DAYS = 7
 #: where a silent column shift attaches one asset's high to another's low.
 OPEN_TIME, OPEN, HIGH, LOW, CLOSE, VOLUME = 0, 1, 2, 3, 4, 5
 QUOTE_VOLUME = 7
+#: Taker buy QUOTE volume (index 9 is the same in base units). D-077.
+TAKER_BUY_QUOTE = 10
 
 #: Above this share of symbols failing, the run is a failure, not a partial. A
 #: 418 IP ban fails every symbol, and 'partial' would let it pass as a bad day.
@@ -182,6 +198,7 @@ class BinanceKlinesCollector(BaseCollector):
         )
         bars: list[list] = []
         cursor = start_ms
+        limit = PAGE_LIMIT if self.backfill else INCREMENTAL_PAGE_LIMIT
 
         while True:
             page = await self.request_json(
@@ -192,16 +209,16 @@ class BinanceKlinesCollector(BaseCollector):
                     "symbol": symbol,
                     "interval": "1d",
                     "startTime": cursor,
-                    "limit": PAGE_LIMIT,
+                    "limit": limit,
                 },
             )
             if not page:
                 break
             bars.extend(page)
-            if len(page) < PAGE_LIMIT:
+            if len(page) < limit:
                 break
             # +1ms so the last bar is not returned twice, which would otherwise
-            # loop forever on a symbol with exactly PAGE_LIMIT bars remaining.
+            # loop forever on a symbol with exactly `limit` bars remaining.
             cursor = int(page[-1][OPEN_TIME]) + 1
         return bars
 
@@ -292,6 +309,12 @@ class BinanceKlinesCollector(BaseCollector):
                         # Quote volume is already USD notional and is NOT
                         # per-token, so it must not be divided.
                         "volume_usd": _f(bar[QUOTE_VOLUME]),
+                        # Quote units too, so NOT divided either. A short
+                        # array (no taker field) gives None, and the upsert
+                        # keeps any value already on file (KEEP_WHEN_NULL).
+                        "taker_buy_usd": (
+                            _f(bar[TAKER_BUY_QUOTE]) if len(bar) > TAKER_BUY_QUOTE else None
+                        ),
                         "source": "binance_klines",
                         "fetched_at_utc": fetched_at,
                     }
@@ -340,4 +363,10 @@ class BinanceKlinesCollector(BaseCollector):
             return upsert(db, "price_daily", rows)
 
 
-__all__ = ["BACKFILL_DAYS", "INCREMENTAL_DAYS", "BinanceKlinesCollector"]
+__all__ = [
+    "BACKFILL_DAYS",
+    "INCREMENTAL_DAYS",
+    "INCREMENTAL_PAGE_LIMIT",
+    "PAGE_LIMIT",
+    "BinanceKlinesCollector",
+]

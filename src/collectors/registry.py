@@ -40,8 +40,10 @@ from src.collectors.holders import HolderCollector
 from src.collectors.hyperliquid import HyperliquidCollector
 from src.collectors.klines import BinanceKlinesCollector
 from src.collectors.news import NewsCollector
+from src.collectors.supply_history import SupplyHistoryCollector
 from src.collectors.unlocks import UnlockCollector
 from src.logging_setup import get_logger
+from src.pulse.data import BinancePulseCollector
 
 log = get_logger("collectors.registry")
 
@@ -64,6 +66,9 @@ COLLECTORS: dict[str, type[BaseCollector]] = {
     "market_regime": MarketRegimeCollector,
     "news": NewsCollector,
     "binance_klines": BinanceKlinesCollector,
+    "supply_history": SupplyHistoryCollector,
+    # Pulse (D-078). In no tier: src/pulse/run.py runs it and reads its window.
+    "binance_pulse": BinancePulseCollector,
 }
 
 #: Ordered per tier. Universe first -- later collectors read it.
@@ -100,6 +105,10 @@ TIERS: dict[str, list[str]] = {
         "asset_contracts",
         "holders",
         "unlocks",
+        # Net issuance (D-072). Last, so its CoinGecko calls never overlap
+        # asset_contracts' on the shared per-minute limit, and after the daily
+        # tier has written today's market_snapshot, which it extends from.
+        "supply_history",
     ],
     # 5-minute. HOST ONLY -- never wire this to GitHub Actions.
     "fast": [

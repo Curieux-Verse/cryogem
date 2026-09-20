@@ -45,6 +45,7 @@ log = get_logger("report.daily")
 BLOCK_COLUMNS = (
     ("score_fundamental", "Fund"),
     ("score_supply", "Supp"),
+    ("score_momentum", "Mom"),
     ("score_sector", "Sect"),
     ("score_events", "Evnt"),
     ("score_attention", "Attn"),
@@ -95,8 +96,8 @@ def gather(db: Database, run_date: str) -> dict[str, Any]:
     )
     l2 = db.query(
         "SELECT base_asset, total_score, rank, universe_size, percentiles, "
-        "       score_fundamental, score_supply, score_sector, score_events, "
-        "       score_attention, score_drawdown "
+        "       score_fundamental, score_supply, score_momentum, score_sector, "
+        "       score_events, score_attention, score_drawdown, coverage, score_version "
         "FROM layer2_result WHERE run_date = ? ORDER BY rank",
         (run_date,),
     )
@@ -228,10 +229,11 @@ def data_quality(db: Database, run_date: str) -> dict[str, Any]:
     }
 
 
-#: The six L2 blocks and the weight each carries, for the informativeness read.
+#: The seven L2 blocks and the weight each carries, for the informativeness read.
 _BLOCK_COLUMNS = (
     ("fundamental", "score_fundamental"),
     ("supply", "score_supply"),
+    ("momentum", "score_momentum"),
     ("sector", "score_sector"),
     ("events", "score_events"),
     ("attention", "score_attention"),
@@ -326,8 +328,8 @@ def _coverage(db: Database, run_date: str) -> dict[str, dict[str, Any]]:
         (
             "supply_metrics",
             "t.snapshot_date = ?",
-            "t.emissions_annual IS NOT NULL OR t.staked_ratio IS NOT NULL "
-            "OR t.burned_pct_of_total IS NOT NULL",
+            # Net issuance is the only supply metric with a writer (D-072).
+            "t.emissions_annual IS NOT NULL",
         ),
         ("attention_snapshot", "t.snapshot_date = ?", "t.social_volume IS NOT NULL"),
     )
@@ -448,23 +450,29 @@ def render(payload: dict[str, Any]) -> str:
     if not ranked:
         lines += ["Nothing survived to rank.", ""]
     else:
-        header = "| # | Asset | Score | " + " | ".join(label for _, label in BLOCK_COLUMNS)
+        header = "| # | Asset | Score | Cov | " + " | ".join(
+            label for _, label in BLOCK_COLUMNS
+        )
         lines += [
             header + " | Flags |",
-            "|---:|---|---:|" + "---:|" * len(BLOCK_COLUMNS) + "---|",
+            "|---:|---|---:|---:|" + "---:|" * len(BLOCK_COLUMNS) + "---|",
         ]
         for row in ranked:
             percentiles = json_load(row["percentiles"], {}) or {}
-            cells = " | ".join(_num(row[key], 0) for key, _ in BLOCK_COLUMNS)
+            cells = " | ".join(_num(row.get(key), 0) for key, _ in BLOCK_COLUMNS)
+            coverage = row.get("coverage")
             lines.append(
                 f"| {row['rank']} | {row['base_asset']} | {_num(row['total_score'])} | "
+                f"{'—' if coverage is None else f'{coverage:.0%}'} | "
                 f"{cells} | {', '.join(flags_for(percentiles)) or '—'} |"
             )
         lines.append("")
         lines += [
             "_A blank block score means that block had no data for the asset. "
-            "Its weight was redistributed across the blocks that did, never "
-            "counted as zero._",
+            "It earns nothing toward the score -- missing data is never "
+            "rewarded (D-075) -- and \"Cov\" is the share of the run's live "
+            "block weight the asset was actually measured on. A block measured "
+            "for almost no asset is dark and counts for nobody._",
             "",
         ]
 
@@ -693,8 +701,8 @@ def _quality_section(quality: dict[str, Any]) -> list[str]:
             "",
             f"_{dead_weight:g} of {total_weight:g} weight ({share:.0%}) carried no "
             "information. The ranking is effectively built from the remaining "
-            "blocks; it is not wrong, but it rests on fewer inputs than the six "
-            "the weights imply._",
+            "blocks; it is not wrong, but it rests on fewer inputs than the "
+            "seven the weights imply._",
             "",
         ]
 

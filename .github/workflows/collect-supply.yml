@@ -64,6 +64,8 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          # supply_history and asset_contracts call CoinGecko (D-072).
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
           PYTHONIOENCODING: utf-8
 
       # Guarded in the shell, not in `if:` -- a step's own env is not in scope

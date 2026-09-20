@@ -80,3 +80,77 @@ jobs:
             exit 0
           fi
           curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+
+  # ---------------------------------------------------------------------------
+  # Pulse, the hourly clock (docs/PLAN_ACTIVE_SCREENER.md section 6; D-080/081).
+  #
+  # A separate JOB, not a step of `collect`, and deliberately without `needs`:
+  #   * a failing hourly collector (CryptoPanic 404s every hour) fails the
+  #     collect step, and a step after it would never run -- Pulse fetches its
+  #     own bars, OI and funding and does not depend on that tier;
+  #   * a Pulse failure must not cost the trigger-lag row or the collect ping,
+  #     and continue-on-error on a step would have kept HEALTHCHECK_HOURLY green
+  #     through a dead Pulse. Each job pings its own check, so each check means
+  #     one thing: HOURLY = the collect tier, PULSE = an hour scored, SITE = the
+  #     Pages deploy.
+  # Timing-agnostic: it scores the last CLOSED hour whatever minute this fires.
+  # ---------------------------------------------------------------------------
+  pulse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Score the last closed hour
+        run: python -m src.cli pulse run
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          # State-change alerts only (D-080). Unset = skipped quietly; a
+          # delivery failure never fails this step.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONIOENCODING: utf-8
+
+      - name: Healthcheck ping
+        # Guarded in the shell, not in `if:` (D-033). Success only: the missed
+        # ping is the signal that an hour went unscored.
+        if: success()
+        env:
+          HC: ${{ secrets.HEALTHCHECK_PULSE }}
+        run: |
+          if [ -z "$HC" ]; then
+            echo "::notice::HEALTHCHECK_PULSE is unset; skipping healthcheck ping"
+            exit 0
+          fi
+          curl -fsS -m 10 --retry 3 "https://hc-ping.com/$HC"
+
+  # Redeploy the site with a fresh pulse.json -- WITHOUT a git commit: build-site
+  # bakes pulse.json from the database inside its own build. A reusable-workflow
+  # call, not a workflow_run link, so it adds no level to the daily chain (D-045).
+  #
+  # Runs after Pulse whether it succeeded or not (never when cancelled): after a
+  # failure the bake still tells the truth -- the last hour until it is 3h old,
+  # then "unavailable" -- which is better than leaving an old bundle up.
+  #
+  # No timeout-minutes here: GitHub rejects it on a job that `uses:` a workflow.
+  # The called jobs carry their own (test_workflows exempts this job shape).
+  site:
+    needs: pulse
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-site.yml
+    with:
+      # The newest main, not this run's dispatch SHA: a dispatch queued just
+      # before the daily data commit would otherwise redeploy yesterday's Gem
+      # files over today's for an hour.
+      checkout_ref: main
+    secrets: inherit
