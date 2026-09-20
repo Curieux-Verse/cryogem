@@ -380,6 +380,90 @@ export interface PulseRiser {
   prev_rank: number | null;
 }
 
+// -- the Pulse journal (D-081) ---------------------------------------------------
+//
+// Deliberately NOT the same shape as `Journal` above, and deliberately not
+// merged with it. The Gem journal measures a 90-day signal grouped into
+// signal/control; this one measures a 4-hour signal grouped by TRIGGER, with
+// its own control. A shared type would invite a shared table, and a shared
+// table would let one clock flatter the other.
+
+/** One trigger's entry into the journal. `control` is the random comparison. */
+export type PulseTrigger = "aligned" | "top10" | "control";
+
+export interface PulseMoments {
+  n?: number;
+  /** Either may be null when nothing completed: never rendered as zero. */
+  mean: number | null;
+  median: number | null;
+  stdev?: number | null;
+  min?: number | null;
+  max?: number | null;
+}
+
+/** Null when this trigger or the controls have no completed returns yet. */
+export interface PulseVsControl {
+  control_n: number;
+  median_difference: number | null;
+  mean_difference: number | null;
+}
+
+export interface PulseJournalBlock {
+  n: number;
+  raw?: PulseMoments | null;
+  vs_btc?: PulseMoments | null;
+  hit_rate_vs_btc?: number | null;
+  max_adverse?: PulseMoments | null;
+  max_favourable?: PulseMoments | null;
+  /** Absent on the `control` trigger: a control has nothing to compare to. */
+  vs_control?: PulseVsControl | null;
+}
+
+export interface PulseJournalEntry {
+  entry_id: string;
+  /** The hour the score describes. Entry price is the NEXT 1H bar's open. */
+  ts_signal_utc: string;
+  asset: string;
+  trigger: PulseTrigger | string;
+  is_control: boolean;
+  pulse_score: number | null;
+  pulse_rank: number | null;
+  gem_rank: number | null;
+  state_4h: PulseState | string | null;
+  score_version?: string | null;
+  /** May be `{}`, or hold only the horizons that have elapsed. */
+  returns: Record<
+    string,
+    {
+      return_raw: number | null;
+      return_vs_btc: number | null;
+      max_favourable: number | null;
+      max_adverse: number | null;
+    }
+  >;
+  file?: string | null;
+}
+
+export interface PulseJournal {
+  schema_version: number;
+  /** "unavailable" when the publisher could not read the journal. */
+  status: "ok" | "unavailable" | string;
+  generated_at_utc: string | null;
+  score_version: string | null;
+  horizons: string[];
+  /** Below this many completed returns no number is shown at all. */
+  min_for_conclusion: number;
+  entries_total: number;
+  entries_with_returns: number;
+  /** `entries` is the newest `entries_shown` of `entries_total`. */
+  entries_shown: number;
+  first_entry_utc: string | null;
+  coverage_note: string;
+  /** {score_version: {trigger: {horizon: block}}}. `{}` before any return. */
+  statistics: Record<string, Record<string, Record<string, PulseJournalBlock>>>;
+  entries: PulseJournalEntry[];
+}
+
 export interface Pulse {
   schema_version: number;
   /** "unavailable" when no pulse_result was written in the last 3h. */

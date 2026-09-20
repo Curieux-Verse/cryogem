@@ -14,6 +14,7 @@ import type {
   Latest,
   Manifest,
   Pulse,
+  PulseJournal,
   Rejected,
 } from "./types";
 
@@ -65,14 +66,15 @@ export const getAsset = (file: string) =>
  *  while repeated renders inside one window still share a URL. */
 export const PULSE_REFRESH_MS = 5 * 60_000;
 
-export async function getPulse(): Promise<Pulse> {
+/** Fetch an hourly file, uncached, treating absence as news rather than error. */
+async function loadHourly<T>(name: string): Promise<T> {
   const bucket = Math.floor(Date.now() / PULSE_REFRESH_MS);
-  const response = await fetch(`${DATA_ROOT}/pulse.json?t=${bucket}`, { cache: "no-cache" });
+  const response = await fetch(`${DATA_ROOT}/${name}?t=${bucket}`, { cache: "no-cache" });
   if (response.status === 404) {
-    throw new MissingData("pulse.json has not been published");
+    throw new MissingData(`${name} has not been published`);
   }
   if (!response.ok) {
-    throw new Error(`pulse.json: HTTP ${response.status}`);
+    throw new Error(`${name}: HTTP ${response.status}`);
   }
   // Pages serves index.html-style fallbacks for some hosts; a non-JSON body
   // is "not published", not a crash.
@@ -80,13 +82,21 @@ export async function getPulse(): Promise<Pulse> {
   try {
     data = await response.json();
   } catch {
-    throw new MissingData("pulse.json is not valid JSON");
+    throw new MissingData(`${name} is not valid JSON`);
   }
   if (!data || typeof data !== "object") {
-    throw new MissingData("pulse.json is empty");
+    throw new MissingData(`${name} is empty`);
   }
-  return data as Pulse;
+  return data as T;
 }
+
+export const getPulse = () => loadHourly<Pulse>("pulse.json");
+
+/** The Pulse journal (D-081), baked on the same hourly clock and ignored by
+ *  git exactly as pulse.json is. It does not exist until the first bake writes
+ *  it, and a site with no Pulse journal is not a broken site: the caller shows
+ *  the empty state and the DAILY Gem journal on the same page is unaffected. */
+export const getPulseJournal = () => loadHourly<PulseJournal>("pulse_journal.json");
 
 /** A Pulse older than this is not shown as current (plan section 6: status
  *  "unavailable" is written when no pulse_result landed in 3h). */

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Section, TableWrap } from "../components/Bits";
+import PulseJournalSection from "../components/PulseJournalSection";
 import { Empty, Gate } from "../components/States";
 import { getJournal } from "../lib/data";
 import { DASH, num, pct, signedPct } from "../lib/format";
@@ -261,13 +262,18 @@ export default function Journal() {
     });
   }, [journal, group, shown]);
 
+  // TWO records, side by side and never merged. The Gem journal's load state and
+  // the Pulse journal's are independent in both directions: the hourly file is
+  // absent until its first bake, and the daily one must render exactly as it
+  // always has when it is -- and vice versa.
   return (
-    <Gate
-      data={journal}
-      what="the journal"
-      missingTitle="No journal published yet"
-      missingBody="The journal records every ranked asset plus a random control drawn from the same survivor pool, then fills in forward returns as each horizon elapses. It appears here after the first journal run."
-    >
+    <>
+      <Gate
+        data={journal}
+        what="the journal"
+        missingTitle="No journal published yet"
+        missingBody="The journal records every ranked asset plus a random control drawn from the same survivor pool, then fills in forward returns as each horizon elapses. It appears here after the first journal run."
+      >
       {(data) => (
         <>
           <Section
@@ -425,6 +431,8 @@ export default function Journal() {
           ) : null}
         </>
       )}
-    </Gate>
+      </Gate>
+      <PulseJournalSection />
+    </>
   );
 }

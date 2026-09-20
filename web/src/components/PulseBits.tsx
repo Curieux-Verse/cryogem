@@ -166,6 +166,46 @@ export function RiskChip({ flag }: { flag: string }) {
   );
 }
 
+// -- journal trigger chips (D-081) -------------------------------------------------
+
+/** What wrote a Pulse journal row. Three distinct things, and the control is
+ *  the one a reader must never mistake for a signal: it is the random
+ *  comparison the other two are measured against. */
+export const TRIGGER_EXPLAIN: Record<string, { text: string; className: string; tip: string }> = {
+  aligned: {
+    text: "entered aligned",
+    className: "border-pass bg-pass/20 text-pass font-semibold",
+    tip: "The asset ENTERED the ALIGNED set this hour: Gem rank ≤ 25, Pulse ≥ 70, a bullish 4H structure and no risk flag. Staying aligned is not an event.",
+  },
+  top10: {
+    text: "entered top 10",
+    className: "border-ink/60 text-ink",
+    tip: "The asset ENTERED the Pulse top 10 this hour, compared with the previous scored hour. Staying in the top 10 is not an event.",
+  },
+  control: {
+    text: "control · random",
+    className: "border-dashed border-muted text-muted",
+    tip: "The random comparison: one scored survivor per hour that did NOT trigger, drawn at random. Without it a positive return says nothing, because everything may simply have gone up.",
+  },
+};
+
+export function TriggerChip({ trigger }: { trigger: string }) {
+  const style = TRIGGER_EXPLAIN[trigger] ?? {
+    text: trigger.replace(/_/g, " "),
+    className: "border-line text-muted",
+    tip: "Unrecognised trigger.",
+  };
+  return (
+    <span
+      className={`whitespace-nowrap border px-1.5 py-0.5 font-mono text-[10px] uppercase ${style.className}`}
+      title={style.tip}
+      aria-label={`${style.text}. ${style.tip}`}
+    >
+      {style.text}
+    </span>
+  );
+}
+
 // -- score delta ----------------------------------------------------------------------
 
 export function Delta({ value }: { value: number | null | undefined }) {

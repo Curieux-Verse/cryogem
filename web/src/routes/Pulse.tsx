@@ -13,7 +13,7 @@ import {
   StateChip,
 } from "../components/PulseBits";
 import { PULSE_REFRESH_MS, PULSE_STALE_AFTER_HOURS, getPulse } from "../lib/data";
-import { DASH, num } from "../lib/format";
+import { DASH, hhmm, num, relative } from "../lib/format";
 import { useData, useNow } from "../lib/useData";
 import type { Pulse as PulseData, PulseAsset } from "../lib/types";
 
@@ -31,26 +31,6 @@ const EXCLUSION_TEXT: Record<string, string> = {
   thin_book: "thin book: 24h volume below the floor, where taker flow is noise",
   insufficient_history: "insufficient history: too few closed 1H bars to score",
 };
-
-function hhmm(iso: string | null | undefined): string {
-  if (!iso) return DASH;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return DASH;
-  return new Date(t).toISOString().slice(11, 16);
-}
-
-function relative(iso: string | null | undefined, now: number): string {
-  if (!iso) return "unknown age";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "unknown age";
-  const minutes = Math.max(0, Math.round((now - t) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours < 48) return rest ? `${hours} h ${rest} min ago` : `${hours} h ago`;
-  return `${Math.floor(hours / 24)} days ago`;
-}
 
 function ageHoursAt(iso: string | null | undefined, now: number): number {
   if (!iso) return Number.POSITIVE_INFINITY;

@@ -66,6 +66,30 @@ export function compactInt(value: number | null | undefined): string {
   return value.toLocaleString("en-US");
 }
 
+/** HH:MM of an instant, in UTC. The hourly pages state the hour they show. */
+export function hhmm(iso: string | null | undefined): string {
+  if (!iso) return DASH;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return DASH;
+  return new Date(t).toISOString().slice(11, 16);
+}
+
+/** "12 min ago", against a clock the caller owns (useNow), so the age moves
+ *  while the page sits open. Shared by the Pulse tab and the Pulse journal:
+ *  two copies of this would eventually disagree about the same file. */
+export function relative(iso: string | null | undefined, now: number): string {
+  if (!iso) return "unknown age";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "unknown age";
+  const minutes = Math.max(0, Math.round((now - t) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours < 48) return rest ? `${hours} h ${rest} min ago` : `${hours} h ago`;
+  return `${Math.floor(hours / 24)} days ago`;
+}
+
 /** A check id like L1_PERP_SPOT rendered for a heading. */
 export function checkLabel(id: string): string {
   return id.replace(/^L[123]_/, "").replace(/_/g, " ").toLowerCase();
