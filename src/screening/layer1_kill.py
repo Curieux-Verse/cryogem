@@ -231,7 +231,21 @@ class Layer1Screener:
                     threshold,
                     "the token's origin chain is not covered by any holder source",
                 )
-            return self._unknown("L1_HOLDER_CONC", threshold, "holder data unavailable")
+            # D-083: say WHY there is no share. Still a fail either way.
+            detail = {
+                "stale_holder_list": (
+                    "the holder source returned a frozen, too-short holder list"
+                ),
+                "insufficient_float": (
+                    "too little supply remains after exclusions to judge concentration"
+                ),
+                "all_top_holders_excluded": "every visible top holder is excluded",
+            }.get(a.holder_data_quality or "")
+            return self._unknown(
+                "L1_HOLDER_CONC",
+                threshold,
+                f"holder data unavailable ({detail})" if detail else "holder data unavailable",
+            )
         passed = a.top10_holder_share <= threshold
         return CheckResult(
             "L1_HOLDER_CONC",
